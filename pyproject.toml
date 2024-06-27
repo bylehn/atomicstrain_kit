@@ -6,7 +6,7 @@ requires = [
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "atomicstrain_kit"
+name = "atomicstrain"
 description = "An analysis package to calculate local atomistic strains using MDAnalysis."
 license = {file = "LICENSE" }
 authors = [
