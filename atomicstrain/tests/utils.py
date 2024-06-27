@@ -62,7 +62,8 @@ def make_Universe(
         extras = []
     for ex in extras:
         u.add_TopologyAttr(ex)
-
+    # Add atom names after universe creation
+    u.add_TopologyAttr('names', ['CA'] * n_atoms)
     if trajectory:
         pos = np.arange(3 * n_atoms * n_frames).reshape(n_frames, n_atoms, 3)
         vel = pos + 100 if velocities else None

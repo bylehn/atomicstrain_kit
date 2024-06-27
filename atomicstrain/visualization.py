@@ -18,6 +18,5 @@ def plot_shear_strains(shear_strains, residue_numbers):
     plt.ylabel('Shear Strain')
     plt.title('Shear Strain over Time')
     plt.legend()
-    plt.show()
 
 # Add more visualization functions as needed

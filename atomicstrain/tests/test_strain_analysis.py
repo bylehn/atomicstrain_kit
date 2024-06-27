@@ -1,5 +1,6 @@
 import pytest
 import numpy as np
+import jax.numpy as jnp
 import MDAnalysis as mda
 from atomicstrain.analysis import StrainAnalysis
 from atomicstrain.compute import compute_strain_tensor, compute_principal_strains_and_shear
@@ -51,9 +52,10 @@ def test_compute_principal_strains_and_shear():
     
     shear, principal_strains = compute_principal_strains_and_shear(Q)
     
-    assert isinstance(shear, float)
-    assert principal_strains.shape == (3,)
-    assert np.all(np.diff(principal_strains) <= 0)  # Eigenvalues should be in descending order
+    assert isinstance(shear, jnp.ndarray)
+    assert shear.shape == ()  # Check if it's a scalar
+    sorted_strains = jnp.sort(principal_strains)[::-1]  # Sort in descending order
+    assert jnp.allclose(principal_strains, sorted_strains, atol=1e-5)
 
 def test_strain_analysis_initialization(mock_universes):
     """Test the initialization of StrainAnalysis."""
