@@ -1,7 +1,7 @@
 import os
-from strain.params import AnalysisParams
-from strain.core import run_analysis
-from strain.io import write_results
+from atomicstrain.params import AnalysisParams
+from atomicstrain.core import run_analysis
+from atomicstrain.io import write_results
 
 def main():
     """
