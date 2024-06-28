@@ -6,11 +6,10 @@ import MDAnalysis as mda
 ref = mda.Universe("reference.pdb")
 defm = mda.Universe("deformed.pdb", "trajectory.xtc")
 residue_numbers = list(range(307, 398))
-protein_ca = '(name CA and resid 307-398)'
 R = 10
 
 # Run the analysis
-strain_analysis = StrainAnalysis(ref, defm, residue_numbers, protein_ca, R)
+strain_analysis = StrainAnalysis(ref, defm, residue_numbers, R)
 strain_analysis.run()
 
 # Visualize results

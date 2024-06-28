@@ -4,7 +4,7 @@ import jax.numpy as jnp
 import MDAnalysis as mda
 from atomicstrain.analysis import StrainAnalysis
 from atomicstrain.compute import compute_strain_tensor, compute_principal_strains_and_shear
-from atomicstrain.utils import create_selections
+from atomicstrain.utils import create_selections, generate_ca_selection
 from .utils import make_Universe
 
 @pytest.fixture
@@ -23,8 +23,8 @@ def test_create_selections(mock_universes):
     """Test the create_selections function."""
     ref, defm = mock_universes
     residue_numbers = [1, 2, 3]
-    protein_ca = 'name CA'
     R = 5.0
+    protein_ca = generate_ca_selection(residue_numbers)
     
     selections = create_selections(ref, defm, residue_numbers, protein_ca, R)
     
@@ -54,14 +54,13 @@ def test_compute_principal_strains_and_shear():
     
     assert isinstance(shear, jnp.ndarray)
     assert shear.shape == ()  # Check if it's a scalar
-    sorted_strains = jnp.sort(principal_strains)[::-1]  # Sort in descending order
-    assert jnp.allclose(principal_strains, sorted_strains, atol=1e-5)
+    assert jnp.all(jnp.diff(principal_strains) <= 0)  # Check if sorted in descending order
 
 def test_strain_analysis_initialization(mock_universes):
     """Test the initialization of StrainAnalysis."""
     ref, defm = mock_universes
     residue_numbers = list(range(1, 11))
-    protein_ca = 'name CA'
+    protein_ca = generate_ca_selection(residue_numbers)
     R = 5.0
     
     analysis = StrainAnalysis(ref, defm, residue_numbers, protein_ca, R)
@@ -80,7 +79,7 @@ def test_strain_analysis_run(mock_universes):
     protein_ca = 'name CA'
     R = 5.0
     
-    analysis = StrainAnalysis(ref, defm, residue_numbers, protein_ca, R)
+    analysis = StrainAnalysis(ref, defm, residue_numbers, R)
     analysis.run()
     
     assert hasattr(analysis.results, 'shear_strains')

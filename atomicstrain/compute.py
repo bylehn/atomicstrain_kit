@@ -34,4 +34,5 @@ def compute_principal_strains_and_shear(Q):
     """
     eigenvalues, _ = eigh(Q)
     shear = jnp.trace(Q @ Q) - (1/3) * (jnp.trace(Q))**2
-    return shear, eigenvalues
+    sorted_eigenvalues = jnp.sort(eigenvalues)[::-1]  # Sort in descending order
+    return shear, sorted_eigenvalues

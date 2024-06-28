@@ -1,7 +1,7 @@
 import numpy as np
 from MDAnalysis.analysis.base import AnalysisBase
 from .compute import compute_strain_tensor, compute_principal_strains_and_shear
-from .utils import create_selections
+from .utils import create_selections, generate_ca_selection
 
 class StrainAnalysis(AnalysisBase):
     """
@@ -20,7 +20,7 @@ class StrainAnalysis(AnalysisBase):
 
     """
 
-    def __init__(self, reference, deformed, residue_numbers, protein_ca, R, **kwargs):
+    def __init__(self, reference, deformed, residue_numbers, R, **kwargs):
         """
         Initialize the StrainAnalysis.
 
@@ -28,16 +28,15 @@ class StrainAnalysis(AnalysisBase):
             reference (MDAnalysis.Universe): Reference structure Universe.
             deformed (MDAnalysis.Universe): Deformed structure Universe.
             residue_numbers (list): List of residue numbers to analyze.
-            protein_ca (str): Selection string for protein CA atoms.
             R (float): Radius for atom selection.
             **kwargs: Additional keyword arguments for AnalysisBase.
         """
         self.ref = reference
         self.defm = deformed
         self.residue_numbers = residue_numbers
-        self.protein_ca = protein_ca
+        self.protein_ca = generate_ca_selection(residue_numbers)
         self.R = R
-        self.selections = create_selections(self.ref, self.defm, residue_numbers, protein_ca, R)
+        self.selections = create_selections(self.ref, self.defm, residue_numbers, self.protein_ca, R)
         super().__init__(self.defm.trajectory, **kwargs)
 
     def _prepare(self):
@@ -62,6 +61,8 @@ class StrainAnalysis(AnalysisBase):
         for ((ref_sel, ref_center), (defm_sel, defm_center)) in self.selections:
             A = ref_sel.positions - ref_center.positions[0]
             B = defm_sel.positions - defm_center.positions[0]
+
+            print(f"A shape: {A.shape}, B shape: {B.shape}") # Debugging
 
             Q = compute_strain_tensor(A, B)
             shear, principal = compute_principal_strains_and_shear(Q)
