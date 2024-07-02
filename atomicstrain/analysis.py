@@ -1,7 +1,7 @@
 import numpy as np
 from MDAnalysis.analysis.base import AnalysisBase
 from .compute import compute_strain_tensor, compute_principal_strains_and_shear
-from .utils import create_selections, generate_ca_selection
+from .utils import create_selections
 
 class StrainAnalysis(AnalysisBase):
     """
@@ -14,13 +14,12 @@ class StrainAnalysis(AnalysisBase):
         ref (MDAnalysis.Universe): Reference structure Universe.
         defm (MDAnalysis.Universe): Deformed structure Universe.
         residue_numbers (list): List of residue numbers to analyze.
-        protein_ca (str): Selection string for protein CA atoms.
         R (float): Radius for atom selection.
         selections (list): List of atom selections for analysis.
 
     """
 
-    def __init__(self, reference, deformed, residue_numbers, R, **kwargs):
+    def __init__(self, reference, deformed, residue_numbers, min_neighbors=3, **kwargs):
         """
         Initialize the StrainAnalysis.
 
@@ -34,9 +33,8 @@ class StrainAnalysis(AnalysisBase):
         self.ref = reference
         self.defm = deformed
         self.residue_numbers = residue_numbers
-        self.protein_ca = generate_ca_selection(residue_numbers)
-        self.R = R
-        self.selections = create_selections(self.ref, self.defm, residue_numbers, self.protein_ca, R)
+        self.min_neighbors = min_neighbors
+        self.selections = create_selections(self.ref, self.defm, residue_numbers, min_neighbors)
         super().__init__(self.defm.trajectory, **kwargs)
 
     def _prepare(self):
@@ -62,7 +60,12 @@ class StrainAnalysis(AnalysisBase):
             A = ref_sel.positions - ref_center.positions[0]
             B = defm_sel.positions - defm_center.positions[0]
 
-            print(f"A shape: {A.shape}, B shape: {B.shape}") # Debugging
+            print(f"A shape: {A.shape}, B shape: {B.shape}")
+            
+            # Ensure A and B have the same shape
+            if A.shape != B.shape:
+                print(f"Warning: Shapes don't match for resid {ref_center.resids[0]}. Skipping.")
+                continue
 
             Q = compute_strain_tensor(A, B)
             shear, principal = compute_principal_strains_and_shear(Q)

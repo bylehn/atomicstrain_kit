@@ -1,4 +1,7 @@
-def create_selections(ref, defm, residue_numbers, protein_ca, R):
+import numpy as np
+from MDAnalysis.analysis.distances import distance_array
+
+def create_selections(ref, defm, residue_numbers, min_neighbors=3):
     """
     Create atom selections for strain analysis.
 
@@ -9,7 +12,6 @@ def create_selections(ref, defm, residue_numbers, protein_ca, R):
         ref (MDAnalysis.Universe): Reference structure Universe.
         defm (MDAnalysis.Universe): Deformed structure Universe.
         residue_numbers (list): List of residue numbers to analyze.
-        protein_ca (str): Selection string for protein CA atoms.
         R (float): Radius for atom selection.
 
     Returns:
@@ -18,48 +20,37 @@ def create_selections(ref, defm, residue_numbers, protein_ca, R):
             where each selection is an MDAnalysis.AtomGroup.
     """
     selections = []
-    for resid in residue_numbers:
-        selection_str = f"({protein_ca} and around {R} (resid {resid} and name CA))"
-        center_str = f"resid {resid} and name CA"
-
-        ref_selection = ref.select_atoms(selection_str)
-        ref_center = ref.select_atoms(center_str)
-
-        ref_resids = ref_selection.resids
-        defm_selection_str = f"(name CA and resid {' '.join(map(str, ref_resids))})"
-        defm_center_str = f"resid {resid} and name CA" 
-
-        defm_selection = defm.select_atoms(defm_selection_str)
-        defm_center = defm.select_atoms(defm_center_str)
-
+    
+    # Select all CA atoms from the specified residues
+    ref_cas = ref.select_atoms(f"name CA and resid {' '.join(map(str, residue_numbers))}")
+    defm_cas = defm.select_atoms(f"name CA and resid {' '.join(map(str, residue_numbers))}")
+    
+    print(f"Debug: Number of CA atoms selected: {len(ref_cas)}")
+    
+    # Calculate distances between all CA atoms in the reference structure
+    distances = distance_array(ref_cas.positions, ref_cas.positions)
+    
+    print(f"Debug: Shape of distances array: {distances.shape}")
+    
+    # For each atom, find the distance to its (min_neighbors+1)th nearest neighbor
+    sorted_distances = np.sort(distances, axis=1)
+    neighbor_distances = sorted_distances[:, min_neighbors+1]
+    
+    # Use the maximum of these distances as our new radius
+    R = np.max(neighbor_distances)
+    print(f"Debug: Calculated radius R = {R}")
+    
+    for i, resid in enumerate(residue_numbers):
+        # Select CA atoms within radius R of the current CA in the reference structure
+        ref_selection = ref_cas[distances[i] <= R]
+        ref_center = ref.select_atoms(f"name CA and resid {resid}")
+        
+        # Use the same atom indices for the deformed structure
+        defm_selection = defm_cas[distances[i] <= R]
+        defm_center = defm.select_atoms(f"name CA and resid {resid}")
+        
+        print(f"Resid {resid}: Ref atoms: {len(ref_selection)}, Defm atoms: {len(defm_selection)}")
+        
         selections.append(((ref_selection, ref_center), (defm_selection, defm_center)))
+    
     return selections
-
-def generate_ca_selection(residue_numbers):
-    """
-    Generate a selection string for CA atoms of a protein.
-
-    This function generates a selection string for CA atoms of a protein
-    given a list of residue numbers.
-
-    Args:
-        residue_numbers (list): List of residue numbers.
-
-    Returns:
-        str: Selection string for CA atoms.
-    """
-
-    # Sort the residue numbers and find the ranges
-    sorted_residues = sorted(set(residue_numbers))
-    ranges = []
-    range_start = sorted_residues[0]
-    
-    for i in range(1, len(sorted_residues)):
-        if sorted_residues[i] != sorted_residues[i-1] + 1:
-            ranges.append((range_start, sorted_residues[i-1]))
-            range_start = sorted_residues[i]
-    ranges.append((range_start, sorted_residues[-1]))
-    
-    # Create the selection string
-    selection_parts = [f"{start}-{end}" if start != end else str(start) for start, end in ranges]
-    return f"(name CA and resid {' '.join(selection_parts)})"

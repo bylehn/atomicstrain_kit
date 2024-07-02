@@ -17,6 +17,8 @@ def compute_strain_tensor(Am, Bm):
     D = jnp.linalg.inv(Am.T @ Am)
     C = Bm @ Bm.T - Am @ Am.T
     Q = 0.5 * (D @ Am.T @ C @ Am @ D)
+    # Explicitly symmetrize the tensor
+    Q = 0.5 * (Q + Q.T)
     return Q
 
 @jit
