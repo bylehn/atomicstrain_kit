@@ -2,6 +2,7 @@ import numpy as np
 from MDAnalysis.analysis.base import AnalysisBase
 from .compute import compute_strain_tensor, compute_principal_strains_and_shear
 from .utils import create_selections
+from .io import write_strain_files, write_pdb_with_strains
 
 class StrainAnalysis(AnalysisBase):
     """
@@ -16,10 +17,11 @@ class StrainAnalysis(AnalysisBase):
         residue_numbers (list): List of residue numbers to analyze.
         R (float): Radius for atom selection.
         selections (list): List of atom selections for analysis.
+        output_dir (str): Directory to write output files.
 
     """
 
-    def __init__(self, reference, deformed, residue_numbers, min_neighbors=3, **kwargs):
+    def __init__(self, reference, deformed, residue_numbers, output_dir, min_neighbors=3, **kwargs):
         """
         Initialize the StrainAnalysis.
 
@@ -28,6 +30,7 @@ class StrainAnalysis(AnalysisBase):
             deformed (MDAnalysis.Universe): Deformed structure Universe.
             residue_numbers (list): List of residue numbers to analyze.
             R (float): Radius for atom selection.
+            output_dir (str): Directory to write output files.
             **kwargs: Additional keyword arguments for AnalysisBase.
         """
         self.ref = reference
@@ -35,6 +38,7 @@ class StrainAnalysis(AnalysisBase):
         self.residue_numbers = residue_numbers
         self.min_neighbors = min_neighbors
         self.selections = create_selections(self.ref, self.defm, residue_numbers, min_neighbors)
+        self.output_dir = output_dir
         super().__init__(self.defm.trajectory, **kwargs)
 
     def _prepare(self):
@@ -59,8 +63,6 @@ class StrainAnalysis(AnalysisBase):
         for ((ref_sel, ref_center), (defm_sel, defm_center)) in self.selections:
             A = ref_sel.positions - ref_center.positions[0]
             B = defm_sel.positions - defm_center.positions[0]
-
-            print(f"A shape: {A.shape}, B shape: {B.shape}")
             
             # Ensure A and B have the same shape
             if A.shape != B.shape:
@@ -80,9 +82,28 @@ class StrainAnalysis(AnalysisBase):
         Conclude the analysis by processing the collected data.
 
         This method is called after iteration on the trajectory is finished.
-        It computes average strains and converts results to numpy arrays.
+        It computes average strains, converts results to numpy arrays,
+        and writes the results to files.
         """
         self.results.shear_strains = np.array(self.results.shear_strains)
         self.results.principal_strains = np.array(self.results.principal_strains)
         self.results.avg_shear_strains = np.mean(self.results.shear_strains, axis=0)
         self.results.avg_principal_strains = np.mean(self.results.principal_strains, axis=0)
+
+        # Write strain data to files
+        write_strain_files(
+            self.output_dir,
+            self.results.shear_strains,
+            self.results.principal_strains,
+            self.results.avg_shear_strains,
+            self.results.avg_principal_strains
+        )
+
+        # Write PDB file with strains
+        write_pdb_with_strains(
+            self.defm.filename,
+            self.output_dir,
+            self.residue_numbers,
+            self.results.avg_shear_strains,
+            self.results.avg_principal_strains
+        )

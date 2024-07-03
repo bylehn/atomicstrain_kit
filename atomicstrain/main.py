@@ -7,10 +7,11 @@ import MDAnalysis as mda
 ref = mda.Universe(REFERENCE_PDB)
 defm = mda.Universe(DEFORMED_PDB)  # Assuming you don't have a separate trajectory file
 residue_numbers = list(range(307, 398))
+output_dir = 'results'
 min_neighbors = 3  # Using min_neighbors instead of R as per the updated StrainAnalysis
 
 # Run the analysis
-strain_analysis = StrainAnalysis(ref, defm, residue_numbers, min_neighbors)
+strain_analysis = StrainAnalysis(ref, defm, residue_numbers, output_dir, min_neighbors)
 strain_analysis.run()
 
 # Visualize results
