@@ -10,5 +10,6 @@ __version__ = version("atomicstrain")
 
 from .analysis import StrainAnalysis
 from .io import write_strain_files, write_pdb_with_strains
+from .visualization import visualize_strains
 
-__all__ = ['StrainAnalysis', 'write_strain_files', 'write_pdb_with_strains']
+__all__ = ['StrainAnalysis', 'write_strain_files', 'write_pdb_with_strains', 'visualize_strains']

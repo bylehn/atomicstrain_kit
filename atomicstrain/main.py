@@ -1,5 +1,4 @@
-from atomicstrain import StrainAnalysis
-from atomicstrain.visualization import plot_shear_strains
+from atomicstrain import StrainAnalysis, visualize_strains
 from atomicstrain.data.files import REFERENCE_PDB, DEFORMED_PDB
 import MDAnalysis as mda
 
@@ -14,5 +13,10 @@ min_neighbors = 3  # Using min_neighbors instead of R as per the updated StrainA
 strain_analysis = StrainAnalysis(ref, defm, residue_numbers, output_dir, min_neighbors)
 strain_analysis.run()
 
-# Visualize results
-plot_shear_strains(strain_analysis.results.shear_strains, residue_numbers)
+# Create visualizations
+visualize_strains(
+    residue_numbers,
+    strain_analysis.results.shear_strains,
+    strain_analysis.results.principal_strains,
+    output_dir
+)
