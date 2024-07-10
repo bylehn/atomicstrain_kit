@@ -67,7 +67,8 @@ def write_pdb_with_strains(deformed_pdb, output_dir, residue_numbers, avg_shear_
             if residue.resid in selected_residues.resids:
                 ca_atom = residue.atoms.select_atoms('name CA')
                 if ca_atom:  # Check if CA atom exists
-                    ca_atom.tempfactors = 100 * avg_shear_strains[residue.resid - residue_numbers[0]]
+                    for atom in ca_atom:
+                        atom.tempfactor = 100 * avg_shear_strains[residue.resid - residue_numbers[0]]
         PDB.write(u.atoms)  # Write first frame
 
         # Next 3 Frames: Principal Strains
@@ -76,6 +77,7 @@ def write_pdb_with_strains(deformed_pdb, output_dir, residue_numbers, avg_shear_
                 if residue.resid in selected_residues.resids:
                     ca_atom = residue.atoms.select_atoms('name CA')
                     if ca_atom:  # Check if CA atom exists
-                        # Assign principal strain component to B-factor
-                        ca_atom.tempfactors = 100 * avg_principal_strains[residue.resid - residue_numbers[0], component]
+                        for atom in ca_atom:
+                            # Assign principal strain component to B-factor
+                            atom.tempfactor = 100 * avg_principal_strains[residue.resid - residue_numbers[0], component]
             PDB.write(u.atoms)  # Write each principal component frame
