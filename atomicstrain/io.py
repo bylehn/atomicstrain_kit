@@ -60,24 +60,32 @@ def write_pdb_with_strains(deformed_pdb, output_dir, residue_numbers, avg_shear_
     selected_residues = u.select_atoms(residue_selection_string)
     pdb_filename = os.path.join(output_dir, 'strains.pdb')
 
+    # Create a mapping of residue numbers to their index in the residue_numbers list
+    residue_index_map = {resid: i for i, resid in enumerate(residue_numbers)}
+
     # Initialize a PDB writer for multiple frames
     with mda.Writer(pdb_filename, multiframe=True, bonds=None, n_atoms=u.atoms.n_atoms) as PDB:
         # Frame 1: Average Shear Strains
-        for residue in u.residues:
-            if residue.resid in selected_residues.resids:
+        tempfactors = np.zeros(len(u.atoms))
+        for residue in selected_residues.residues:
+            if residue.resid in residue_index_map:
                 ca_atom = residue.atoms.select_atoms('name CA')
-                if ca_atom:  # Check if CA atom exists
-                    for atom in ca_atom:
-                        atom.tempfactor = 100 * avg_shear_strains[residue.resid - residue_numbers[0]]
-        PDB.write(u.atoms)  # Write first frame
+                if ca_atom:
+                    strain_value = 100 * avg_shear_strains[residue_index_map[residue.resid]]
+                    tempfactors[ca_atom.indices] = strain_value
+        u.atoms.tempfactors = tempfactors
+        PDB.write(u.atoms)
 
         # Next 3 Frames: Principal Strains
-        for component in range(3):  # Assuming 3 principal components
-            for residue in u.residues:
-                if residue.resid in selected_residues.resids:
+        for component in range(3):
+            tempfactors = np.zeros(len(u.atoms))
+            for residue in selected_residues.residues:
+                if residue.resid in residue_index_map:
                     ca_atom = residue.atoms.select_atoms('name CA')
-                    if ca_atom:  # Check if CA atom exists
-                        for atom in ca_atom:
-                            # Assign principal strain component to B-factor
-                            atom.tempfactor = 100 * avg_principal_strains[residue.resid - residue_numbers[0], component]
-            PDB.write(u.atoms)  # Write each principal component frame
+                    if ca_atom:
+                        strain_value = 100 * avg_principal_strains[residue_index_map[residue.resid], component]
+                        tempfactors[ca_atom.indices] = strain_value
+            u.atoms.tempfactors = tempfactors
+            PDB.write(u.atoms)
+
+    print(f"PDB file with strain data has been written to {pdb_filename}")
