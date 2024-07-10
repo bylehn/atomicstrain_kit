@@ -63,29 +63,34 @@ def write_pdb_with_strains(deformed_pdb, output_dir, residue_numbers, avg_shear_
     # Create a mapping of residue numbers to their index in the residue_numbers list
     residue_index_map = {resid: i for i, resid in enumerate(residue_numbers)}
 
-    # Initialize a PDB writer for multiple frames
-    with mda.Writer(pdb_filename, multiframe=True, bonds=None, n_atoms=u.atoms.n_atoms) as PDB:
-        # Frame 1: Average Shear Strains
-        tempfactors = np.zeros(len(u.atoms))
-        for residue in selected_residues.residues:
-            if residue.resid in residue_index_map:
-                ca_atom = residue.atoms.select_atoms('name CA')
-                if ca_atom:
-                    strain_value = 100 * avg_shear_strains[residue_index_map[residue.resid]]
-                    tempfactors[ca_atom.indices] = strain_value
-        u.atoms.tempfactors = tempfactors
-        PDB.write(u.atoms)
+    # Function to write a single frame
+    def write_frame(strain_values):
+        with open(pdb_filename, 'a') as f:
+            f.write("MODEL\n")
+            for atom in u.atoms:
+                if atom.resid in residue_index_map and atom.name == 'CA':
+                    strain_value = strain_values[residue_index_map[atom.resid]]
+                else:
+                    strain_value = 0.0
+                
+                # Format the PDB line manually
+                line = f"ATOM  {atom.id:5d} {atom.name:<4s} {atom.resname:<3s} {atom.segment.segid:1s}{atom.resid:4d}    "
+                line += f"{atom.position[0]:8.3f}{atom.position[1]:8.3f}{atom.position[2]:8.3f}"
+                line += f"{1.00:6.2f}{strain_value:6.2f}          {atom.element:>2s}\n"
+                f.write(line)
+            f.write("ENDMDL\n")
 
-        # Next 3 Frames: Principal Strains
-        for component in range(3):
-            tempfactors = np.zeros(len(u.atoms))
-            for residue in selected_residues.residues:
-                if residue.resid in residue_index_map:
-                    ca_atom = residue.atoms.select_atoms('name CA')
-                    if ca_atom:
-                        strain_value = 100 * avg_principal_strains[residue_index_map[residue.resid], component]
-                        tempfactors[ca_atom.indices] = strain_value
-            u.atoms.tempfactors = tempfactors
-            PDB.write(u.atoms)
+    # Write the file
+    with open(pdb_filename, 'w') as f:
+        f.write("TITLE     Strain Analysis Results\n")
+        f.write("REMARK    Frame 1: Average Shear Strains\n")
+        f.write("REMARK    Frames 2-4: Principal Strains\n")
+
+    # Frame 1: Average Shear Strains
+    write_frame(avg_shear_strains * 100)
+
+    # Next 3 Frames: Principal Strains
+    for component in range(3):
+        write_frame(avg_principal_strains[:, component] * 100)
 
     print(f"PDB file with strain data has been written to {pdb_filename}")
