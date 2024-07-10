@@ -63,6 +63,9 @@ def write_pdb_with_strains(deformed_pdb, output_dir, residue_numbers, avg_shear_
     # Create a mapping of residue numbers to their index in the residue_numbers list
     residue_index_map = {resid: i for i, resid in enumerate(residue_numbers)}
 
+    # Check if element information is available
+    has_elements = hasattr(u.atoms[0], 'element')
+
     # Function to write a single frame
     def write_frame(strain_values):
         with open(pdb_filename, 'a') as f:
@@ -76,7 +79,15 @@ def write_pdb_with_strains(deformed_pdb, output_dir, residue_numbers, avg_shear_
                 # Format the PDB line manually
                 line = f"ATOM  {atom.id:5d} {atom.name:<4s} {atom.resname:<3s} {atom.segment.segid:1s}{atom.resid:4d}    "
                 line += f"{atom.position[0]:8.3f}{atom.position[1]:8.3f}{atom.position[2]:8.3f}"
-                line += f"{1.00:6.2f}{strain_value:6.2f}          {atom.element:>2s}\n"
+                line += f"{1.00:6.2f}{strain_value:6.2f}"
+                
+                # Add element if available, otherwise pad with spaces
+                if has_elements:
+                    line += f"          {atom.element:>2s}"
+                else:
+                    line += "              "
+                
+                line += "\n"
                 f.write(line)
             f.write("ENDMDL\n")
 
