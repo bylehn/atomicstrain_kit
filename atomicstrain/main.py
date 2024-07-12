@@ -1,7 +1,25 @@
+import sys
+import os
+from datetime import datetime
 from atomicstrain import StrainAnalysis, visualize_strains
 from atomicstrain.data.files import REFERENCE_PDB, DEFORMED_PDB
 import MDAnalysis as mda
 import argparse
+
+def log_command(output_dir):
+    """
+    Log the command used to run the script.
+
+    Args:
+        output_dir (str): Directory to save the log file.
+    """
+    command = " ".join(sys.argv)
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log_file = os.path.join(output_dir, "run_command.log")
+    
+    with open(log_file, "w") as f:
+        f.write(f"Timestamp: {timestamp}\n")
+        f.write(f"Command: {command}\n")
 
 def main():
     parser = argparse.ArgumentParser(description="Run atomic strain analysis with optional stride.")
@@ -13,6 +31,13 @@ def main():
     parser.add_argument("-o", "--output", default="results", help="Output directory for results")
     parser.add_argument("-m", "--min-neighbors", type=int, default=3, help="Minimum number of neighbors for analysis")
     args = parser.parse_args()
+
+    # Create output directory if it doesn't exist
+    if not os.path.exists(args.output):
+        os.makedirs(args.output)
+
+    # Log the command used to run the script
+    log_command(args.output)
 
     # Set up your analysis
     if args.ref_trajectory:
@@ -53,6 +78,8 @@ def main():
         strain_analysis.results.principal_strains,
         args.output
     )
+
+    print(f"Analysis complete. Results and log file saved in {args.output}")
 
 if __name__ == "__main__":
     main()
