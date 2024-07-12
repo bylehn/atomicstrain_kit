@@ -4,7 +4,7 @@ import numpy as np
 
 def plot_strain_histograms(shear_strains, principal_strains, output_dir):
     """
-    Plot histograms for shear strain and principal strains.
+    Plot histograms for shear strain and principal strains, including log histograms.
 
     Args:
         shear_strains (np.ndarray): Array of shear strains.
@@ -15,23 +15,41 @@ def plot_strain_histograms(shear_strains, principal_strains, output_dir):
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
-    # Plot histogram for shear strain
-    plt.figure(figsize=(10, 6))
-    plt.hist(shear_strains, bins=30, edgecolor='black')
-    plt.title('Histogram of Shear Strain')
-    plt.xlabel('Shear Strain')
-    plt.ylabel('Frequency')
-    plt.savefig(os.path.join(output_dir, 'shear_strain_histogram.png'))
+    # Plot histograms for shear strain
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 6))
+    ax1.hist(shear_strains, bins=30, edgecolor='black')
+    ax1.set_title('Histogram of Shear Strain')
+    ax1.set_xlabel('Shear Strain')
+    ax1.set_ylabel('Frequency')
+    
+    # Log histogram for shear strain
+    log_shear = np.log10(np.abs(shear_strains) + 1e-10)  # Add small value to avoid log(0)
+    ax2.hist(log_shear, bins=30, edgecolor='black')
+    ax2.set_title('Histogram of Log10 Shear Strain')
+    ax2.set_xlabel('Log10 Shear Strain')
+    ax2.set_ylabel('Frequency')
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, 'shear_strain_histograms.png'))
     plt.close()
 
     # Plot histograms for principal strains
     for i in range(3):
-        plt.figure(figsize=(10, 6))
-        plt.hist(principal_strains[:, i], bins=30, edgecolor='black')
-        plt.title(f'Histogram of Principal Strain {i+1}')
-        plt.xlabel(f'Principal Strain {i+1}')
-        plt.ylabel('Frequency')
-        plt.savefig(os.path.join(output_dir, f'principal_strain_{i+1}_histogram.png'))
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 6))
+        ax1.hist(principal_strains[:, i], bins=30, edgecolor='black')
+        ax1.set_title(f'Histogram of Principal Strain {i+1}')
+        ax1.set_xlabel(f'Principal Strain {i+1}')
+        ax1.set_ylabel('Frequency')
+        
+        # Log histogram for principal strain
+        log_principal = np.log10(np.abs(principal_strains[:, i]) + 1e-10)  # Add small value to avoid log(0)
+        ax2.hist(log_principal, bins=30, edgecolor='black')
+        ax2.set_title(f'Histogram of Log10 Principal Strain {i+1}')
+        ax2.set_xlabel(f'Log10 Principal Strain {i+1}')
+        ax2.set_ylabel('Frequency')
+        
+        plt.tight_layout()
+        plt.savefig(os.path.join(output_dir, f'principal_strain_{i+1}_histograms.png'))
         plt.close()
 
 def plot_strain_line(residue_numbers, avg_shear_strains, avg_principal_strains, output_dir):
