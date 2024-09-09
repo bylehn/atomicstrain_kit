@@ -1,12 +1,17 @@
+import argparse
+import math
+import sys
 from atomicstrain import StrainAnalysis, visualize_strains
 from atomicstrain.data.files import REFERENCE_PDB, DEFORMED_PDB
 import MDAnalysis as mda
-import argparse
-from MDAnalysis import units
 
-def convert_time(time_value, from_unit, to_unit='ps'):
-    """Convert time from one unit to another."""
-    return units.convert(time_value, from_unit, to_unit)
+def ns_to_frame(time_ns, dt_ps):
+    """Convert time in nanoseconds to the nearest frame number."""
+    return round(time_ns * 1000 / dt_ps)
+
+def frame_to_ns(frame, dt_ps):
+    """Convert frame number to time in nanoseconds."""
+    return frame * dt_ps / 1000
 
 def main():
     parser = argparse.ArgumentParser(description="Run atomic strain analysis with optional stride and time range.")
@@ -17,11 +22,15 @@ def main():
     parser.add_argument("-s", "--stride", type=int, default=1, help="Stride for trajectory analysis (default: 1)")
     parser.add_argument("-o", "--output", default="results", help="Output directory for results")
     parser.add_argument("-m", "--min-neighbors", type=int, default=3, help="Minimum number of neighbors for analysis")
-    parser.add_argument("-b", "--begin", type=float, default=None, help="Start time for analysis")
-    parser.add_argument("-e", "--end", type=float, default=None, help="End time for analysis")
-    parser.add_argument("-u", "--time-unit", default="ps", choices=['ps', 'ns', 'us', 'ms', 's'],
-                        help="Time unit for begin and end times (default: ps)")
+    parser.add_argument("-b", "--begin", type=float, default=None, help="Start time for analysis (in ns)")
+    parser.add_argument("-e", "--end", type=float, default=None, help="End time for analysis (in ns)")
+    parser.add_argument("-dt", "--time-step", type=float, default=None, help="Time step between frames (in ps)")
     args = parser.parse_args()
+
+    # Check if dt is provided when begin or end is specified
+    if (args.begin is not None or args.end is not None) and args.time_step is None:
+        print("Error: Time step (-dt) must be provided when specifying begin (-b) or end (-e) times.")
+        sys.exit(1)
 
     # Set up your analysis
     if args.ref_trajectory:
@@ -38,37 +47,55 @@ def main():
         defm = mda.Universe(args.deformed)
         print(f"Using deformed PDB: {args.deformed}")
 
-    # Determine the time range and number of frames to analyze
-    start_frame, end_frame = None, None
-    if args.def_trajectory:
-        times = defm.trajectory.time
-        time_unit = defm.trajectory.dt_object.unit
-        print(f"Trajectory time unit: {time_unit}")
-        
-        if args.begin is not None:
-            begin_ps = convert_time(args.begin, args.time_unit)
-            start_frame = defm.trajectory.check_slice_indices([times[times >= begin_ps].min()])[0]
-        if args.end is not None:
-            end_ps = convert_time(args.end, args.time_unit)
-            end_frame = defm.trajectory.check_slice_indices([times[times <= end_ps].max()])[0] + 1
+    # Determine the total number of frames
+    total_frames = len(defm.trajectory)
+    if args.ref_trajectory:
+        total_frames = min(total_frames, len(ref.trajectory))
 
-        n_frames = len(defm.trajectory[start_frame:end_frame])
-        if args.ref_trajectory:
-            ref_times = ref.trajectory.time
-            ref_start = ref.trajectory.check_slice_indices([ref_times[ref_times >= times[start_frame]].min()])[0] if start_frame else None
-            ref_end = ref.trajectory.check_slice_indices([ref_times[ref_times <= times[end_frame-1]].max()])[0] + 1 if end_frame else None
-            n_frames = min(n_frames, len(ref.trajectory[ref_start:ref_end]))
+    # Handle begin and end times if provided
+    if args.begin is not None or args.end is not None:
+        total_time_ns = frame_to_ns(total_frames - 1, args.time_step)
 
-        print(f"Analyzing {n_frames} frames with stride {args.stride}")
-        start_time = convert_time(times[start_frame if start_frame else 0], 'ps', args.time_unit)
-        end_time = convert_time(times[end_frame-1 if end_frame else -1], 'ps', args.time_unit)
-        print(f"Time range: {start_time:.2f} to {end_time:.2f} {args.time_unit}")
+        if args.begin is None:
+            start_frame = 0
+        else:
+            if args.begin < 0:
+                print(f"Error: Begin time ({args.begin} ns) cannot be negative.")
+                sys.exit(1)
+            if args.begin > total_time_ns:
+                print(f"Error: Begin time ({args.begin} ns) is beyond the trajectory length ({total_time_ns:.2f} ns).")
+                sys.exit(1)
+            start_frame = ns_to_frame(args.begin, args.time_step)
+
+        if args.end is None:
+            end_frame = total_frames
+        else:
+            if args.end <= args.begin:
+                print(f"Error: End time ({args.end} ns) must be greater than begin time ({args.begin} ns).")
+                sys.exit(1)
+            if args.end > total_time_ns:
+                print(f"Warning: End time ({args.end} ns) is beyond the trajectory length ({total_time_ns:.2f} ns). Using the last frame.")
+                end_frame = total_frames
+            else:
+                end_frame = min(ns_to_frame(args.end, args.time_step), total_frames)
+
+        print(f"Time range: {frame_to_ns(start_frame, args.time_step):.2f} to {frame_to_ns(end_frame - 1, args.time_step):.2f} ns")
     else:
-        n_frames = 1
-        args.stride = None
-        print("Analyzing single frame (no trajectories provided)")
+        start_frame = 0
+        end_frame = total_frames
 
-    residue_numbers = list(range(307, 398))  # You might want to make this configurable as well
+    n_frames = math.ceil((end_frame - start_frame) / args.stride)
+
+    if n_frames <= 0:
+        print("Error: No frames to analyze with the given parameters.")
+        sys.exit(1)
+
+    print(f"Total frames in trajectory: {total_frames}")
+    print(f"Analyzing frames from {start_frame} to {end_frame} with stride {args.stride}")
+    n_frames = math.ceil((end_frame - start_frame) / args.stride)
+    print(f"Total frames to be analyzed: {n_frames}")
+
+    residue_numbers = list(range(6, 97))  # You might want to make this configurable as well
 
     # Run the analysis
     strain_analysis = StrainAnalysis(ref, defm, residue_numbers, args.output, args.min_neighbors, n_frames)

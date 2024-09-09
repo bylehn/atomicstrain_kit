@@ -48,7 +48,7 @@ class StrainAnalysis(AnalysisBase):
         self._prepare()
         
         if self.n_frames is not None:
-            stop = min(self.n_frames, len(self.defm.trajectory))
+            stop = min(self.n_frames * (stride or 1) + (start or 0), len(self.defm.trajectory))
         
         # Determine the frames to analyze
         frames = range(start or 0, stop or len(self.defm.trajectory), stride or 1)
