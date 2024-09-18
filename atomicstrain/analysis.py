@@ -15,6 +15,7 @@ class StrainAnalysis(AnalysisBase):
         self.selections = create_selections(self.ref, self.defm, residue_numbers, min_neighbors, use_all_heavy)
         self.output_dir = output_dir
         self.n_frames = n_frames
+        self.has_ref_trajectory = hasattr(self.ref, 'trajectory') and len(self.ref.trajectory) > 1
         super().__init__(self.defm.trajectory, n_frames=n_frames, **kwargs)
 
     def _prepare(self):
@@ -27,8 +28,8 @@ class StrainAnalysis(AnalysisBase):
         frame_principal = []
         frame_atom_info = []
 
-        # Ensure reference and deformed are at the same frame
-        if hasattr(self.ref, 'trajectory'):
+        # Update reference frame only if it has a trajectory
+        if self.has_ref_trajectory:
             self.ref.trajectory[self._frame_index]
 
         for ((ref_sel, ref_center), (defm_sel, defm_center)) in self.selections:
