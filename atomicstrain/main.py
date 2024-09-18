@@ -25,6 +25,7 @@ def main():
     parser.add_argument("-b", "--begin", type=float, default=None, help="Start time for analysis (in ns)")
     parser.add_argument("-e", "--end", type=float, default=None, help="End time for analysis (in ns)")
     parser.add_argument("-dt", "--time-step", type=float, default=None, help="Time step between frames (in ps)")
+    parser.add_argument("--use-all-heavy", action="store_true", help="Use all heavy atoms instead of only CA atoms")
     args = parser.parse_args()
 
     # Check if dt is provided when begin or end is specified
@@ -98,12 +99,12 @@ def main():
     residue_numbers = list(range(6, 97))  # You might want to make this configurable as well
 
     # Run the analysis
-    strain_analysis = StrainAnalysis(ref, defm, residue_numbers, args.output, args.min_neighbors, n_frames)
+    strain_analysis = StrainAnalysis(ref, defm, residue_numbers, args.output, args.min_neighbors, n_frames, use_all_heavy=args.use_all_heavy)
     strain_analysis.run(start=start_frame, stop=end_frame, stride=args.stride)
 
     # Create visualizations
     visualize_strains(
-        residue_numbers,
+        strain_analysis.results.atom_info,
         strain_analysis.results.shear_strains,
         strain_analysis.results.principal_strains,
         args.output

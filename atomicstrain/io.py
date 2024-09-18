@@ -2,7 +2,7 @@ import os
 import MDAnalysis as mda
 import numpy as np
 
-def write_strain_files(output_dir, shear_strains, principal_strains, avg_shear_strains, avg_principal_strains):
+def write_strain_files(output_dir, shear_strains, principal_strains, avg_shear_strains, avg_principal_strains, atom_info, use_all_heavy):
     """
     Write strain data to files.
 
@@ -12,6 +12,8 @@ def write_strain_files(output_dir, shear_strains, principal_strains, avg_shear_s
         principal_strains (np.ndarray): Array of principal strains.
         avg_shear_strains (np.ndarray): Array of average shear strains.
         avg_principal_strains (np.ndarray): Array of average principal strains.
+        atom_info (list): List of tuples containing residue number and atom name.
+        use_all_heavy (bool): Whether to use all heavy atoms or only CA atoms.
     """
     # Create output directory if it doesn't exist
     if not os.path.exists(output_dir):
@@ -20,15 +22,15 @@ def write_strain_files(output_dir, shear_strains, principal_strains, avg_shear_s
     # Write average shear strains to file
     avg_shear_strains_file = os.path.join(output_dir, 'avg_shear_strains.txt')
     with open(avg_shear_strains_file, 'w') as f_shear:
-        for i, avg_shear in enumerate(avg_shear_strains):
-            f_shear.write(f'Residue {i+1}: {avg_shear:.4f}\n')
+        for i, (avg_shear, (resid, atom_name)) in enumerate(zip(avg_shear_strains, atom_info)):
+            f_shear.write(f'Residue {resid}, Atom {atom_name}: {avg_shear:.4f}\n')
 
     # Write average principal strains for each component
     for component in range(3):  # Assuming 3 principal components
         avg_principal_file = os.path.join(output_dir, f'avg_principal_{component+1}.txt')
         with open(avg_principal_file, 'w') as f_principal:
-            for i, principal in enumerate(avg_principal_strains):
-                f_principal.write(f'Residue {i+1}: {principal[component]:.4f}\n')
+            for i, (principal, (resid, atom_name)) in enumerate(zip(avg_principal_strains, atom_info)):
+                f_principal.write(f'Residue {resid}, Atom {atom_name}: {principal[component]:.4f}\n')
 
     # Write raw shear strains
     raw_shear_strains_file = os.path.join(output_dir, 'raw_shear_strains.txt')
@@ -43,7 +45,7 @@ def write_strain_files(output_dir, shear_strains, principal_strains, avg_shear_s
             for frame in principal_strains:
                 f_raw_principal.write(' '.join(map(lambda x: f'{x[component]:.4f}', frame)) + '\n')
 
-def write_pdb_with_strains(deformed_pdb, output_dir, residue_numbers, avg_shear_strains, avg_principal_strains):
+def write_pdb_with_strains(deformed_pdb, output_dir, residue_numbers, avg_shear_strains, avg_principal_strains, atom_info, use_all_heavy):
     """
     Write a PDB file with strain data in the B-factor column.
 
@@ -53,55 +55,24 @@ def write_pdb_with_strains(deformed_pdb, output_dir, residue_numbers, avg_shear_
         residue_numbers (list): List of residue numbers to process.
         avg_shear_strains (np.ndarray): Array of average shear strains.
         avg_principal_strains (np.ndarray): Array of average principal strains.
+        atom_info (list): List of tuples containing residue number and atom name.
+        use_all_heavy (bool): Whether to use all heavy atoms or only CA atoms.
     """
     # Load the deformed PDB structure
     u = mda.Universe(deformed_pdb)
-    residue_selection_string = "resid " + " ".join(map(str, residue_numbers))
-    selected_residues = u.select_atoms(residue_selection_string)
     pdb_filename = os.path.join(output_dir, 'strains.pdb')
 
-    # Create a mapping of residue numbers to their index in the residue_numbers list
-    residue_index_map = {resid: i for i, resid in enumerate(residue_numbers)}
+    # perhaps this won't work, it is writing with MDAnalysis but before I had to create my own way to write pdb file
+    with mda.Writer(pdb_filename, multiframe=True, bonds=None, n_atoms=u.atoms.n_atoms) as PDB:
+        # Frame 1: Average Shear Strains
+        for atom, (resid, atom_name), shear_strain in zip(u.atoms, atom_info, avg_shear_strains):
+            if atom.resid in residue_numbers and (not use_all_heavy or atom.name != 'H'):
+                atom.tempfactor = 100 * shear_strain
+        PDB.write(u.atoms)
 
-    # Check if element information is available
-    has_elements = hasattr(u.atoms[0], 'element')
-
-    # Function to write a single frame
-    def write_frame(strain_values):
-        with open(pdb_filename, 'a') as f:
-            f.write("MODEL\n")
-            for atom in u.atoms:
-                if atom.resid in residue_index_map and atom.name == 'CA':
-                    strain_value = strain_values[residue_index_map[atom.resid]]
-                else:
-                    strain_value = 0.0
-                
-                # Format the PDB line manually
-                line = f"ATOM  {atom.id:5d} {atom.name:<4s} {atom.resname:<3s} {atom.segment.segid:1s}{atom.resid:4d}    "
-                line += f"{atom.position[0]:8.3f}{atom.position[1]:8.3f}{atom.position[2]:8.3f}"
-                line += f"{1.00:6.2f}{strain_value:6.2f}"
-                
-                # Add element if available, otherwise pad with spaces
-                if has_elements:
-                    line += f"          {atom.element:>2s}"
-                else:
-                    line += "              "
-                
-                line += "\n"
-                f.write(line)
-            f.write("ENDMDL\n")
-
-    # Write the file
-    with open(pdb_filename, 'w') as f:
-        f.write("TITLE     Strain Analysis Results\n")
-        f.write("REMARK    Frame 1: Average Shear Strains\n")
-        f.write("REMARK    Frames 2-4: Principal Strains\n")
-
-    # Frame 1: Average Shear Strains
-    write_frame(avg_shear_strains * 100)
-
-    # Next 3 Frames: Principal Strains
-    for component in range(3):
-        write_frame(avg_principal_strains[:, component] * 100)
-
-    print(f"PDB file with strain data has been written to {pdb_filename}")
+        # Next 3 Frames: Principal Strains
+        for component in range(3):
+            for atom, (resid, atom_name), principal_strain in zip(u.atoms, atom_info, avg_principal_strains):
+                if atom.resid in residue_numbers and (not use_all_heavy or atom.name != 'H'):
+                    atom.tempfactor = 100 * principal_strain[component]
+            PDB.write(u.atoms)
