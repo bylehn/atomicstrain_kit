@@ -34,8 +34,8 @@ class StrainAnalysis(AnalysisBase):
         frame_shear = np.zeros(len(self.selections), dtype='float32')
         frame_principal = np.zeros((len(self.selections), 3), dtype='float32')
 
-        # Ensure reference and deformed are at the same frame
-        if hasattr(self.ref, 'trajectory'):
+        # Update reference frame only if it has a trajectory
+        if self.has_ref_trajectory:
             self.ref.trajectory[self._frame_index]
 
         for i, ((ref_sel, ref_center), (defm_sel, defm_center)) in enumerate(self.selections):
