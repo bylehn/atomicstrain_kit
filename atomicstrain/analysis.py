@@ -19,20 +19,26 @@ class StrainAnalysis(AnalysisBase):
         super().__init__(self.defm.trajectory, n_frames=n_frames, **kwargs)
 
     def _prepare(self):
-        self.results.shear_strains = []
-        self.results.principal_strains = []
-        self.results.atom_info = []  # Store residue and atom name information
+        # Determine the number of atoms we're analyzing
+        n_atoms = len(self.selections)
+        
+        # Create memory-mapped arrays for results
+        self.results.shear_strains = np.memmap(f"{self.output_dir}/shear_strains.npy", dtype='float32', mode='w+', shape=(self.n_frames, n_atoms))
+        self.results.principal_strains = np.memmap(f"{self.output_dir}/principal_strains.npy", dtype='float32', mode='w+', shape=(self.n_frames, n_atoms, 3))
+        
+        # Store atom info
+        self.results.atom_info = [(ref_center.resid, ref_center.name) for (_, ref_center), _ in self.selections]
+
 
     def _single_frame(self):
-        frame_shear = []
-        frame_principal = []
-        frame_atom_info = []
+        frame_shear = np.zeros(len(self.selections), dtype='float32')
+        frame_principal = np.zeros((len(self.selections), 3), dtype='float32')
 
-        # Update reference frame only if it has a trajectory
-        if self.has_ref_trajectory:
+        # Ensure reference and deformed are at the same frame
+        if hasattr(self.ref, 'trajectory'):
             self.ref.trajectory[self._frame_index]
 
-        for ((ref_sel, ref_center), (defm_sel, defm_center)) in self.selections:
+        for i, ((ref_sel, ref_center), (defm_sel, defm_center)) in enumerate(self.selections):
             A = ref_sel.positions - ref_center.position
             B = defm_sel.positions - defm_center.position
             
@@ -42,14 +48,11 @@ class StrainAnalysis(AnalysisBase):
 
             Q = compute_strain_tensor(A, B)
             shear, principal = compute_principal_strains_and_shear(Q)
-            frame_shear.append(float(shear))
-            frame_principal.append(principal.tolist())
-            frame_atom_info.append((ref_center.resid, ref_center.name))
+            frame_shear[i] = float(shear)
+            frame_principal[i] = principal
 
-        self.results.shear_strains.append(frame_shear)
-        self.results.principal_strains.append(frame_principal)
-        if not self.results.atom_info:  # Only store once, assuming atom order doesn't change
-            self.results.atom_info = frame_atom_info
+        self.results.shear_strains[self._frame_index] = frame_shear
+        self.results.principal_strains[self._frame_index] = frame_principal
 
     def run(self, start=None, stop=None, stride=None, verbose=True):
         self._prepare()
@@ -72,8 +75,7 @@ class StrainAnalysis(AnalysisBase):
         return self
 
     def _conclude(self):
-        self.results.shear_strains = np.array(self.results.shear_strains)
-        self.results.principal_strains = np.array(self.results.principal_strains)
+        # Compute average strains
         self.results.avg_shear_strains = np.mean(self.results.shear_strains, axis=0)
         self.results.avg_principal_strains = np.mean(self.results.principal_strains, axis=0)
 
@@ -96,3 +98,7 @@ class StrainAnalysis(AnalysisBase):
             self.results.atom_info,
             self.use_all_heavy
         )
+
+        # Clean up memory-mapped arrays
+        del self.results.shear_strains
+        del self.results.principal_strains

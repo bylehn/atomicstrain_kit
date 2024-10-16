@@ -8,16 +8,13 @@ def write_strain_files(output_dir, shear_strains, principal_strains, avg_shear_s
 
     Args:
         output_dir (str): Directory to write the output files.
-        shear_strains (np.ndarray): Array of shear strains.
-        principal_strains (np.ndarray): Array of principal strains.
+        shear_strains (np.memmap): Memory-mapped array of shear strains.
+        principal_strains (np.memmap): Memory-mapped array of principal strains.
         avg_shear_strains (np.ndarray): Array of average shear strains.
         avg_principal_strains (np.ndarray): Array of average principal strains.
         atom_info (list): List of tuples containing residue number and atom name.
         use_all_heavy (bool): Whether to use all heavy atoms or only CA atoms.
     """
-    # Create output directory if it doesn't exist
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
 
     # Write average shear strains to file
     avg_shear_strains_file = os.path.join(output_dir, 'avg_shear_strains.txt')
@@ -26,7 +23,7 @@ def write_strain_files(output_dir, shear_strains, principal_strains, avg_shear_s
             f_shear.write(f'Residue {resid}, Atom {atom_name}: {avg_shear:.4f}\n')
 
     # Write average principal strains for each component
-    for component in range(3):  # Assuming 3 principal components
+    for component in range(3):  
         avg_principal_file = os.path.join(output_dir, f'avg_principal_{component+1}.txt')
         with open(avg_principal_file, 'w') as f_principal:
             for i, (principal, (resid, atom_name)) in enumerate(zip(avg_principal_strains, atom_info)):

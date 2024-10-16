@@ -4,6 +4,7 @@ import sys
 from atomicstrain import StrainAnalysis, visualize_strains
 from atomicstrain.data.files import REFERENCE_PDB, DEFORMED_PDB
 import MDAnalysis as mda
+import numpy as np
 
 def ns_to_frame(time_ns, dt_ps):
     """Convert time in nanoseconds to the nearest frame number."""
@@ -105,8 +106,8 @@ def main():
     # Create visualizations
     visualize_strains(
         strain_analysis.results.atom_info,
-        strain_analysis.results.shear_strains,
-        strain_analysis.results.principal_strains,
+        np.memmap(f"{args.output}/shear_strains.npy", dtype='float32', mode='r', shape=(n_frames, len(strain_analysis.results.atom_info))),
+        np.memmap(f"{args.output}/principal_strains.npy", dtype='float32', mode='r', shape=(n_frames, len(strain_analysis.results.atom_info), 3)),
         args.output
     )
 

@@ -194,11 +194,10 @@ def visualize_strains(atom_info, shear_strains, principal_strains, output_dir):
 
     Args:
         atom_info (list): List of tuples containing (residue_number, atom_name) for each atom.
-        shear_strains (np.ndarray): Array of shear strains.
-        principal_strains (np.ndarray): Array of principal strains.
+        hear_strains (np.memmap): Memory-mapped array of shear strains.
+        principal_strains (np.memmap): Memory-mapped array of principal strains.
         output_dir (str): Directory to save the output figures.
     """
-    print("Starting visualization process...")
 
     # Plot histograms
     print("Plotting histograms...")
