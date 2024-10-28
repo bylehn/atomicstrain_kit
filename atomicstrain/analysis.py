@@ -4,6 +4,7 @@ from .compute import compute_strain_tensor, compute_principal_strains_and_shear
 from .utils import create_selections
 from .io import write_strain_files, write_pdb_with_strains
 from tqdm import tqdm
+import os
 
 class StrainAnalysis(AnalysisBase):
     def __init__(self, reference, deformed, residue_numbers, output_dir, min_neighbors=3, n_frames=None, use_all_heavy=False, **kwargs):
@@ -19,6 +20,9 @@ class StrainAnalysis(AnalysisBase):
         super().__init__(self.defm.trajectory, n_frames=n_frames, **kwargs)
 
     def _prepare(self):
+        #Create output directory if it doesn't exist
+        os.makedirs(self.output_dir, exist_ok=True)
+        
         # Determine the number of atoms we're analyzing
         n_atoms = len(self.selections)
         
