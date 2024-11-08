@@ -6,6 +6,14 @@ from .io import write_strain_files, write_pdb_with_strains
 from tqdm import tqdm
 import os
 
+# analysis.py
+import numpy as np
+from MDAnalysis.analysis.base import AnalysisBase
+import os
+from .compute import compute_strain_tensor, compute_principal_strains_and_shear
+from .utils import create_selections
+from .io import write_strain_files, write_pdb_with_strains
+
 class StrainAnalysis(AnalysisBase):
     def __init__(self, reference, deformed, residue_numbers, output_dir, min_neighbors=3, n_frames=None, use_all_heavy=False, **kwargs):
         self.ref = reference
@@ -15,24 +23,54 @@ class StrainAnalysis(AnalysisBase):
         self.use_all_heavy = use_all_heavy
         self.selections = create_selections(self.ref, self.defm, residue_numbers, min_neighbors, use_all_heavy)
         self.output_dir = output_dir
-        self.n_frames = n_frames
         self.has_ref_trajectory = hasattr(self.ref, 'trajectory') and len(self.ref.trajectory) > 1
-        super().__init__(self.defm.trajectory, n_frames=n_frames, **kwargs)
+        
+        # Store n_frames but don't use it directly for array initialization
+        self.requested_n_frames = n_frames
+        
+        super().__init__(self.defm.trajectory, **kwargs)
 
     def _prepare(self):
-        #Create output directory if it doesn't exist
+        # Create output directory if it doesn't exist
         os.makedirs(self.output_dir, exist_ok=True)
         
         # Determine the number of atoms we're analyzing
         n_atoms = len(self.selections)
         
-        # Create memory-mapped arrays for results
-        self.results.shear_strains = np.memmap(f"{self.output_dir}/shear_strains.npy", dtype='float32', mode='w+', shape=(self.n_frames, n_atoms))
-        self.results.principal_strains = np.memmap(f"{self.output_dir}/principal_strains.npy", dtype='float32', mode='w+', shape=(self.n_frames, n_atoms, 3))
+        # Calculate actual number of frames that will be analyzed
+        start = self.start if self.start is not None else 0
+        stop = self.stop if self.stop is not None else len(self.defm.trajectory)
+        step = self.step if self.step is not None else 1
+        
+        # Calculate actual number of frames based on start, stop, and stride
+        actual_n_frames = len(range(start, stop, step))
+        print(f"Preparing analysis for {actual_n_frames} frames")
+        
+        # Use the data subdirectory for memory-mapped files
+        data_dir = os.path.join(self.output_dir, 'data')
+        os.makedirs(data_dir, exist_ok=True)
+        
+        # Create memory-mapped arrays with correct size
+        self.results.shear_strains = np.memmap(
+            f"{data_dir}/shear_strains.npy",
+            dtype='float32',
+            mode='w+',
+            shape=(actual_n_frames, n_atoms)
+        )
+        
+        self.results.principal_strains = np.memmap(
+            f"{data_dir}/principal_strains.npy",
+            dtype='float32',
+            mode='w+',
+            shape=(actual_n_frames, n_atoms, 3)
+        )
         
         # Store atom info
-        self.results.atom_info = [(ref_center.resid, ref_center.name) for (_, ref_center), _ in self.selections]
-
+        self.results.atom_info = [(ref_center.resid, ref_center.name) 
+                                 for (_, ref_center), _ in self.selections]
+        
+        # Initialize frame counter
+        self._frame_counter = 0
 
     def _single_frame(self):
         frame_shear = np.zeros(len(self.selections), dtype='float32')
@@ -55,38 +93,30 @@ class StrainAnalysis(AnalysisBase):
             frame_shear[i] = float(shear)
             frame_principal[i] = principal
 
-        self.results.shear_strains[self._frame_index] = frame_shear
-        self.results.principal_strains[self._frame_index] = frame_principal
+        # Use frame counter instead of frame index for array indexing
+        self.results.shear_strains[self._frame_counter] = frame_shear
+        self.results.principal_strains[self._frame_counter] = frame_principal
+        self._frame_counter += 1
 
     def run(self, start=None, stop=None, stride=None, verbose=True):
-        self._prepare()
-        
-        if self.n_frames is not None:
-            stop = min(self.n_frames * (stride or 1) + (start or 0), len(self.defm.trajectory))
-        
-        # Determine the frames to analyze
-        frames = range(start or 0, stop or len(self.defm.trajectory), stride or 1)
-        
-        # Use tqdm for a progress bar if verbose
-        iterator = tqdm(frames, desc="Analyzing frames", disable=not verbose)
-        
-        for frame in iterator:
-            self._frame_index = frame
-            self.defm.trajectory[frame]
-            self._single_frame()
-        
-        self._conclude()
-        return self
+        self.start = start
+        self.stop = stop
+        self.step = stride
+        return super().run(start=start, stop=stop, step=stride, verbose=verbose)
 
     def _conclude(self):
-        # Compute average strains
-        self.results.avg_shear_strains = np.mean(self.results.shear_strains, axis=0)
-        self.results.avg_principal_strains = np.mean(self.results.principal_strains, axis=0)
+        # Compute average strains using the actual number of frames analyzed
+        self.results.avg_shear_strains = np.mean(self.results.shear_strains[:self._frame_counter], axis=0)
+        self.results.avg_principal_strains = np.mean(self.results.principal_strains[:self._frame_counter], axis=0)
+
+        # Save a copy of the strains before writing files
+        self.results.final_shear_strains = np.array(self.results.shear_strains[:self._frame_counter])
+        self.results.final_principal_strains = np.array(self.results.principal_strains[:self._frame_counter])
 
         write_strain_files(
             self.output_dir,
-            self.results.shear_strains,
-            self.results.principal_strains,
+            self.results.shear_strains[:self._frame_counter],
+            self.results.principal_strains[:self._frame_counter],
             self.results.avg_shear_strains,
             self.results.avg_principal_strains,
             self.results.atom_info,

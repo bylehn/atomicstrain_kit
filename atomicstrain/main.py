@@ -1,5 +1,6 @@
 import argparse
 import math
+import numpy as np
 import sys
 import os
 import datetime
@@ -8,6 +9,13 @@ from typing import List, Dict, Any
 from atomicstrain import StrainAnalysis, visualize_strains
 from atomicstrain.data.files import REFERENCE_PDB, DEFORMED_PDB
 import MDAnalysis as mda
+
+def ensure_output_dirs(output_dir):
+    """Create all necessary output directories."""
+    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(os.path.join(output_dir, 'data'), exist_ok=True)
+    os.makedirs(os.path.join(output_dir, 'figures'), exist_ok=True)
+    os.makedirs(os.path.join(output_dir, 'structures'), exist_ok=True)
 
 def ns_to_frame(time_ns: float, dt_ps: float) -> int:
     """Convert time in nanoseconds to the nearest frame number."""
@@ -154,6 +162,9 @@ def main():
                        help="Range of residues to analyze in format 'start-end' (default: '6-97')")
     args = parser.parse_args()
 
+    # Create output directories
+    ensure_output_dirs(args.output)
+    
     # Save run information
     save_run_info(args, args.output)
     
@@ -249,21 +260,26 @@ def main():
     print(f"Analyzing frames from {start_frame} to {end_frame} with stride {args.stride}")
     print(f"Total frames to be analyzed: {n_frames}")
     print(f"Analyzing residues {start_res} to {end_res}")
-    print("\n=== Running Analysis ===")
 
+    print("\n=== Running Analysis ===")
     # Run the analysis
     strain_analysis = StrainAnalysis(ref, defm, residue_numbers, args.output, args.min_neighbors, 
                                    n_frames, use_all_heavy=args.use_all_heavy)
     strain_analysis.run(start=start_frame, stop=end_frame, stride=args.stride)
 
+
     print("\n=== Creating Visualizations ===")
-    # Create visualizations
-    visualize_strains(
-        strain_analysis.results.atom_info,
-        strain_analysis.results.shear_strains,
-        strain_analysis.results.principal_strains,
-        args.output
-    )
+    try:
+        # Use the saved final arrays instead of the deleted memory-mapped arrays
+        visualize_strains(
+            strain_analysis.results.atom_info,
+            strain_analysis.results.final_shear_strains,
+            strain_analysis.results.final_principal_strains,
+            args.output
+        )
+    except Exception as e:
+        print(f"Warning: Error during visualization: {str(e)}")
+        print("Analysis results were saved, but visualization failed.")
 
     print("\n=== Analysis Complete ===")
     print(f"Run completed at: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
