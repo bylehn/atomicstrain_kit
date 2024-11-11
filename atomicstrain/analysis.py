@@ -24,17 +24,23 @@ class StrainAnalysis(AnalysisBase):
         super().__init__(self.defm.trajectory, **kwargs)
 
     def _prepare(self):
-        # Calculate frame range
+        # Create output directory if it doesn't exist
+        os.makedirs(self.output_dir, exist_ok=True)
+        
+        # Calculate actual number of frames
         start = self.start if self.start is not None else 0
         stop = self.stop if self.stop is not None else len(self.defm.trajectory)
         step = self.step if self.step is not None else 1
         actual_n_frames = len(range(start, stop, step))
         n_atoms = len(self.selections)
         
-        print(f"Preparing analysis for {actual_n_frames} frames and {n_atoms} atoms")
+        print(f"Preparing analysis for {actual_n_frames} frames")
+        
+        # Create data subdirectory
+        data_dir = os.path.join(self.output_dir, 'data')
+        os.makedirs(data_dir, exist_ok=True)
         
         # Create memory-mapped arrays
-        data_dir = os.path.join(self.output_dir, 'data')
         self.results.shear_strains = np.memmap(
             f"{data_dir}/shear_strains.npy",
             dtype='float32',
@@ -55,27 +61,28 @@ class StrainAnalysis(AnalysisBase):
         self._frame_counter = 0
 
     def _single_frame(self):
-        # Update reference frame if needed
         if self.has_ref_trajectory:
             self.ref.trajectory[self._frame_index]
 
-        # Collect all positions and centers
-        ref_positions = []
-        ref_centers = []
-        def_positions = []
-        def_centers = []
+        # Pre-allocate numpy arrays instead of lists
+        n_selections = len(self.selections)
+        ref_positions = np.zeros((n_selections, self.min_neighbors, 3), dtype=np.float32)
+        ref_centers = np.zeros((n_selections, 3), dtype=np.float32)
+        def_positions = np.zeros((n_selections, self.min_neighbors, 3), dtype=np.float32)
+        def_centers = np.zeros((n_selections, 3), dtype=np.float32)
 
-        for (ref_sel, ref_center), (defm_sel, defm_center) in self.selections:
-            ref_positions.append(ref_sel.positions)
-            ref_centers.append(ref_center.position)
-            def_positions.append(defm_sel.positions)
-            def_centers.append(defm_center.position)
+        # Fill arrays directly
+        for i, ((ref_sel, ref_center), (defm_sel, defm_center)) in enumerate(self.selections):
+            ref_positions[i, :len(ref_sel.positions)] = ref_sel.positions[:self.min_neighbors]
+            ref_centers[i] = ref_center.position
+            def_positions[i, :len(defm_sel.positions)] = defm_sel.positions[:self.min_neighbors]
+            def_centers[i] = defm_center.position
 
-        # Process entire frame at once
+        # Process frame with pre-allocated arrays
         frame_shear, frame_principal = process_frame_data(
-            ref_positions, 
+            ref_positions,
             ref_centers,
-            def_positions, 
+            def_positions,
             def_centers
         )
 
@@ -83,13 +90,13 @@ class StrainAnalysis(AnalysisBase):
         self.results.shear_strains[self._frame_counter] = frame_shear
         self.results.principal_strains[self._frame_counter] = frame_principal
         
-        # Periodically flush to disk
-        if self._frame_counter % 100 == 0:
+        # Flush less frequently
+        if self._frame_counter % 1000 == 0:
             self.results.shear_strains.flush()
             self.results.principal_strains.flush()
         
         self._frame_counter += 1
-
+        
     def run(self, start=None, stop=None, stride=None, verbose=True):
         """
         Run the analysis with enhanced progress tracking and error handling.
@@ -191,7 +198,7 @@ class StrainAnalysis(AnalysisBase):
         self.results.avg_shear_strains = np.mean(self.results.shear_strains[:self._frame_counter], axis=0)
         self.results.avg_principal_strains = np.mean(self.results.principal_strains[:self._frame_counter], axis=0)
         
-        # Store final arrays for visualization
+        # Save copies for visualization
         self.results.final_shear_strains = np.array(
             self.results.shear_strains[:self._frame_counter],
             dtype=np.float32
@@ -201,7 +208,6 @@ class StrainAnalysis(AnalysisBase):
             dtype=np.float32
         )
 
-        # Write output files
         write_strain_files(
             self.output_dir,
             self.results.shear_strains[:self._frame_counter],
