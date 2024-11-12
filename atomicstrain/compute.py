@@ -6,8 +6,21 @@ from jax.scipy.linalg import eigh
 from jax import config
 import numpy as np
 
-# Force JAX to use GPU
-config.update('jax_platform_name', 'gpu')
+# Check available devices and select appropriate platform
+def get_available_platform():
+    backends = [backend.platform for backend in jax.devices()]
+    if 'gpu' in backends:
+        return 'gpu'
+    elif 'tpu' in backends:
+        return 'tpu'
+    else:
+        return 'cpu'
+
+# Configure JAX to use the available platform
+platform = get_available_platform()
+config.update('jax_platform_name', platform)
+print(f"Using {platform.upper()} for computations")
+
 # Use 32-bit precision for better performance
 config.update("jax_enable_x64", False)
 
