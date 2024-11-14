@@ -6,14 +6,9 @@ from jax.scipy.linalg import eigh
 def compute_strain_tensor(Am, Bm):
     """
     Compute the strain tensor for given reference and deformed configurations.
-
-    Args:
-        Am (jnp.ndarray): Reference configuration matrix.
-        Bm (jnp.ndarray): Deformed configuration matrix.
-
-    Returns:
-        jnp.ndarray: Computed strain tensor.
     """
+    Am = jnp.asarray(Am)
+    Bm = jnp.asarray(Bm)
     D = jnp.linalg.inv(Am.T @ Am)
     C = Bm @ Bm.T - Am @ Am.T
     Q = 0.5 * (D @ Am.T @ C @ Am @ D)

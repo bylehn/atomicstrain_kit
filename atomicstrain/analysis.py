@@ -5,6 +5,9 @@ from .utils import create_selections
 from .io import write_strain_files, write_pdb_with_strains
 from tqdm import tqdm
 import os
+from functools import partial
+from jax import jit, vmap
+import jax.numpy as jnp
 
 class StrainAnalysis(AnalysisBase):
     def __init__(self, reference, deformed, residue_numbers, output_dir, min_neighbors=3, n_frames=None, use_all_heavy=False, **kwargs):
@@ -34,29 +37,48 @@ class StrainAnalysis(AnalysisBase):
         self.results.atom_info = [(ref_center.resid, ref_center.name) for (_, ref_center), _ in self.selections]
 
 
-    def _single_frame(self):
-        frame_shear = np.zeros(len(self.selections), dtype='float32')
-        frame_principal = np.zeros((len(self.selections), 3), dtype='float32')
-
-        # Update reference frame only if it has a trajectory
-        if self.has_ref_trajectory:
-            self.ref.trajectory[self._frame_index]
-
-        for i, ((ref_sel, ref_center), (defm_sel, defm_center)) in enumerate(self.selections):
-            A = ref_sel.positions - ref_center.position
-            B = defm_sel.positions - defm_center.position
-            
-            if A.shape != B.shape:
-                print(f"Warning: Shapes don't match for atom {ref_center.index}. Skipping.")
-                continue
-
+    @partial(jit, static_argnums=(2,))
+    def process_batch(ref_positions, defm_positions, n_neighbors):
+        """JIT-compiled function to process multiple atoms in parallel"""
+        def process_single(ref_sel_pos, ref_center_pos, defm_sel_pos, defm_center_pos):
+            A = ref_sel_pos - ref_center_pos
+            B = defm_sel_pos - defm_center_pos
             Q = compute_strain_tensor(A, B)
-            shear, principal = compute_principal_strains_and_shear(Q)
-            frame_shear[i] = float(shear)
-            frame_principal[i] = principal
+            return compute_principal_strains_and_shear(Q)
+        
+        # Vectorize the computation across all atoms
+        results = vmap(process_single)(
+            ref_positions[0], 
+            ref_positions[1],
+            defm_positions[0],
+            defm_positions[1]
+        )
+        return results
 
-        self.results.shear_strains[self._frame_index] = frame_shear
-        self.results.principal_strains[self._frame_index] = frame_principal
+    def _single_frame(self):
+        # Convert selections to JAX arrays
+        ref_sel_positions = []
+        ref_center_positions = []
+        defm_sel_positions = []
+        defm_center_positions = []
+        
+        for (ref_sel, ref_center), (defm_sel, defm_center) in self.selections:
+            ref_sel_positions.append(jnp.array(ref_sel.positions))
+            ref_center_positions.append(jnp.array(ref_center.position))
+            defm_sel_positions.append(jnp.array(defm_sel.positions))
+            defm_center_positions.append(jnp.array(defm_center.position))
+        
+        # Stack all positions
+        ref_positions = (jnp.stack(ref_sel_positions), jnp.stack(ref_center_positions))
+        defm_positions = (jnp.stack(defm_sel_positions), jnp.stack(defm_center_positions))
+        
+        # Process batch using JIT-compiled function
+        results = process_batch(ref_positions, defm_positions, self.min_neighbors)
+        shears, principals = results
+        
+        # Store results
+        self.results.shear_strains[self._frame_index] = np.array(shears)
+        self.results.principal_strains[self._frame_index] = np.array(principals)
 
     def run(self, start=None, stop=None, stride=None, verbose=True):
         self._prepare()
