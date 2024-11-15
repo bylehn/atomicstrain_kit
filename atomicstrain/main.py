@@ -27,6 +27,7 @@ def main():
     parser.add_argument("-e", "--end", type=float, default=None, help="End time for analysis (in ns)")
     parser.add_argument("-dt", "--time-step", type=float, default=None, help="Time step between frames (in ps)")
     parser.add_argument("--use-all-heavy", action="store_true", help="Use all heavy atoms instead of only CA atoms")
+    parser.add_argument("--batch-size", type=int, default=512, help="Batch size for GPU processing (default: 512)")
     args = parser.parse_args()
 
     # Check if dt is provided when begin or end is specified
@@ -100,7 +101,13 @@ def main():
     residue_numbers = list(range(6, 97))  # You might want to make this configurable as well
 
     # Run the analysis
-    strain_analysis = StrainAnalysis(ref, defm, residue_numbers, args.output, args.min_neighbors, n_frames, use_all_heavy=args.use_all_heavy)
+    strain_analysis = StrainAnalysis(
+        ref, defm, residue_numbers, args.output, 
+        min_neighbors=args.min_neighbors,
+        n_frames=n_frames,
+        use_all_heavy=args.use_all_heavy,
+        batch_size=args.batch_size  # Add batch_size parameter
+    )
     strain_analysis.run(start=start_frame, stop=end_frame, stride=args.stride)
 
     # Create visualizations

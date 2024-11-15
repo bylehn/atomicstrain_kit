@@ -5,11 +5,13 @@ from jax.scipy.linalg import eigh
 @jit
 def compute_strain_tensor(Am, Bm):
     """
-    Compute the strain tensor for given reference and deformed configurations.
+    Compute the strain tensor for given reference and deformed configurations using masks.
     """
     Am = jnp.asarray(Am)
     Bm = jnp.asarray(Bm)
-    D = jnp.linalg.inv(Am.T @ Am)
+    
+    # Compute tensors directly without boolean indexing
+    D = jnp.linalg.pinv(Am.T @ Am)  # using pinv for better numerical stability
     C = Bm @ Bm.T - Am @ Am.T
     Q = 0.5 * (D @ Am.T @ C @ Am @ D)
     # Explicitly symmetrize the tensor
