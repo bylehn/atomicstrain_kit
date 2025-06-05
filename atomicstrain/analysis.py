@@ -7,12 +7,14 @@ from tqdm import tqdm
 import os
 
 class StrainAnalysis(AnalysisBase):
-    def __init__(self, reference, deformed, residue_numbers, output_dir, min_neighbors=3, n_frames=None, use_all_heavy=False, **kwargs):
+    def __init__(self, reference, deformed, residue_numbers, output_dir, min_neighbors=3, n_frames=None, use_all_heavy=False,
+                 calculate_rmsf=True, **kwargs):
         self.ref = reference
         self.defm = deformed
         self.residue_numbers = residue_numbers
         self.min_neighbors = min_neighbors
         self.use_all_heavy = use_all_heavy
+        self.calculate_rmsf = calculate_rmsf
         self.selections = create_selections(self.ref, self.defm, residue_numbers, min_neighbors, use_all_heavy)
         self.output_dir = output_dir
         self.has_ref_trajectory = hasattr(self.ref, 'trajectory') and len(self.ref.trajectory) > 1
@@ -58,6 +60,12 @@ class StrainAnalysis(AnalysisBase):
         self.results.atom_info = [(ref_center.resid, ref_center.name) 
                                  for (_, ref_center), _ in self.selections]
         
+        if self.calculate_rmsf:
+            self.results._ref_positions = None
+            self.results._positions_sum = np.zeros((n_atoms, 3), dtype=np.float32)
+            self.results._positions_sq_sum = np.zeros((n_atoms, 3), dtype=np.float32)
+            self._first_frame = True
+        
         self._frame_counter = 0
 
     def _single_frame(self):
@@ -89,6 +97,18 @@ class StrainAnalysis(AnalysisBase):
         # Store results
         self.results.shear_strains[self._frame_counter] = frame_shear
         self.results.principal_strains[self._frame_counter] = frame_principal
+
+        if self.calculate_rmsf:
+            current_positions = np.array([defm_center.position for (_, _), (_, defm_center) in self.selections], dtype=np.float32)
+
+            if self._first_frame:
+                self.results._ref_positions = current_positions.copy()
+                self._first_frame = False
+
+            displacements = current_positions - self.results._ref_positions
+
+            self.results._positions_sum += displacements
+            self.results._positions_sq_sum += displacements ** 2
         
         # Flush less frequently
         if self._frame_counter % 1000 == 0:
@@ -198,6 +218,41 @@ class StrainAnalysis(AnalysisBase):
         self.results.avg_shear_strains = np.mean(self.results.shear_strains[:self._frame_counter], axis=0)
         self.results.avg_principal_strains = np.mean(self.results.principal_strains[:self._frame_counter], axis=0)
         
+        # Calculate RMSF if enabled
+        if self.calculate_rmsf:
+            n_frames = self._frame_counter
+            
+            # Calculate mean positions
+            mean_displacements = self.results._positions_sum / n_frames
+            mean_sq_displacements = self.results._positions_sq_sum / n_frames
+            
+            # Calculate variance
+            variance = mean_sq_displacements - mean_displacements ** 2
+            # Handle numerical errors (variance should never be negative)
+            variance = np.maximum(variance, 0)
+            
+            # RMSF is the square root of the sum of variances for x, y, z
+            self.results.rmsf = np.sqrt(np.sum(variance, axis=1))
+            
+            # Calculate normalized strains
+            epsilon = 1e-10  # Small value to prevent division by zero
+            self.results.norm_avg_shear_strains = (
+                self.results.avg_shear_strains / (self.results.rmsf + epsilon)
+            )
+            self.results.norm_avg_principal_strains = (
+                self.results.avg_principal_strains / (self.results.rmsf[:, np.newaxis] + epsilon)
+            )
+            
+            print(f"\nRMSF statistics:")
+            print(f"  Mean RMSF: {np.mean(self.results.rmsf):.4f} Å")
+            print(f"  Min RMSF: {np.min(self.results.rmsf):.4f} Å")
+            print(f"  Max RMSF: {np.max(self.results.rmsf):.4f} Å")
+        else:
+            # Set to None if not calculated
+            self.results.rmsf = None
+            self.results.norm_avg_shear_strains = None
+            self.results.norm_avg_principal_strains = None
+
         # Save copies for visualization
         self.results.final_shear_strains = np.array(
             self.results.shear_strains[:self._frame_counter],
@@ -215,7 +270,10 @@ class StrainAnalysis(AnalysisBase):
             self.results.avg_shear_strains,
             self.results.avg_principal_strains,
             self.results.atom_info,
-            self.use_all_heavy
+            self.use_all_heavy,
+            rmsf=self.results.rmsf,
+            norm_avg_shear_strains=self.results.norm_avg_shear_strains,
+            norm_avg_principal_strains=self.results.norm_avg_principal_strains
         )
 
         write_pdb_with_strains(
@@ -225,7 +283,10 @@ class StrainAnalysis(AnalysisBase):
             self.results.avg_shear_strains,
             self.results.avg_principal_strains,
             self.results.atom_info,
-            self.use_all_heavy
+            self.use_all_heavy,
+            rmsf=self.results.rmsf,
+            norm_avg_shear_strains=self.results.norm_avg_shear_strains,
+            norm_avg_principal_strains=self.results.norm_avg_principal_strains
         )
 
         # Clean up

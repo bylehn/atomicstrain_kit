@@ -204,6 +204,85 @@ def plot_strain_line_std(atom_info, shear_strains, principal_strains, output_dir
 
     print("Finished creating standard deviation plots")
 
+def plot_rmsf_profile(atom_info, rmsf, output_dir):
+    """
+    Plot RMSF profile along the sequence.
+    
+    Args:
+        atom_info (list): List of tuples containing (residue_number, atom_name) for each atom.
+        rmsf (np.ndarray): RMSF values for each atom.
+        output_dir (str): Directory to save the output figure.
+    """
+    figures_dir = os.path.join(output_dir, 'figures')
+    os.makedirs(figures_dir, exist_ok=True)
+    
+    x = range(len(atom_info))
+    x_labels = [f"{info[0]}_{info[1]}" for info in atom_info]
+    
+    plt.figure(figsize=(20, 8))
+    plt.plot(x, rmsf, 'b-', linewidth=2, label='RMSF')
+    plt.fill_between(x, 0, rmsf, alpha=0.3)
+    
+    # Add mean line
+    mean_rmsf = np.mean(rmsf)
+    plt.axhline(y=mean_rmsf, color='r', linestyle='--', alpha=0.7, 
+                label=f'Mean RMSF = {mean_rmsf:.2f} Å')
+    
+    plt.title('Root Mean Square Fluctuation (RMSF) Profile', fontsize=16)
+    plt.xlabel('Residue Number_Atom Name', fontsize=14)
+    plt.ylabel('RMSF (Å)', fontsize=14)
+    plt.legend()
+    
+    tick_spacing = max(1, len(x) // 20)
+    plt.xticks(x[::tick_spacing], x_labels[::tick_spacing], rotation=45, ha='right')
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(figures_dir, 'rmsf_profile.png'), dpi=300)
+    plt.close()
+
+def plot_normalized_strains(atom_info, norm_avg_shear_strains, norm_avg_principal_strains, output_dir):
+    """
+    Plot RMSF-normalized strain profiles.
+    
+    Args:
+        atom_info (list): List of tuples containing (residue_number, atom_name) for each atom.
+        norm_avg_shear_strains (np.ndarray): RMSF-normalized average shear strains.
+        norm_avg_principal_strains (np.ndarray): RMSF-normalized average principal strains.
+        output_dir (str): Directory to save the output figure.
+    """
+    figures_dir = os.path.join(output_dir, 'figures')
+    os.makedirs(figures_dir, exist_ok=True)
+    
+    x = range(len(atom_info))
+    x_labels = [f"{info[0]}_{info[1]}" for info in atom_info]
+    
+    plt.figure(figsize=(20, 10))
+    
+    # Color-blind friendly palette
+    colors = ['#000000', '#E69F00', '#56B4E9', '#009E73']
+    line_styles = ['-', '--', '-.', ':']
+    
+    # Plot normalized strains
+    plt.plot(x, norm_avg_shear_strains, label='Normalized Shear Strain', 
+             color=colors[0], linestyle=line_styles[0], linewidth=2)
+    
+    for i in range(3):
+        plt.plot(x, norm_avg_principal_strains[:, i], 
+                label=f'Normalized Principal Strain {i+1}', 
+                color=colors[i+1], linestyle=line_styles[i+1], linewidth=2)
+    
+    plt.title('RMSF-Normalized Average Strains vs Residue Number_Atom Name', fontsize=16)
+    plt.xlabel('Residue Number_Atom Name', fontsize=14)
+    plt.ylabel('Normalized Strain (dimensionless)', fontsize=14)
+    plt.legend()
+    
+    tick_spacing = max(1, len(x) // 20)
+    plt.xticks(x[::tick_spacing], x_labels[::tick_spacing], rotation=45, ha='right')
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(figures_dir, 'normalized_strains_profile.png'), dpi=300)
+    plt.close()
+    
 def visualize_strains(atom_info, shear_strains, principal_strains, output_dir, chunk_size=1000):
     """Create and save strain visualizations with reduced memory usage."""
     print("Plotting histograms...")

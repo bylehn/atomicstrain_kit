@@ -2,7 +2,8 @@ import os
 import MDAnalysis as mda
 import numpy as np
 
-def write_strain_files(output_dir, shear_strains, principal_strains, avg_shear_strains, avg_principal_strains, atom_info, use_all_heavy):
+def write_strain_files(output_dir, shear_strains, principal_strains, avg_shear_strains, avg_principal_strains, atom_info, use_all_heavy,
+                       rmsf=None, norm_avg_shear_strains=None, norm_avg_principal_strains=None):
     """
     Write strain data to files, handling memory-mapped arrays efficiently and including all strain files.
     
@@ -14,6 +15,9 @@ def write_strain_files(output_dir, shear_strains, principal_strains, avg_shear_s
         avg_principal_strains (np.ndarray): Array of average principal strains.
         atom_info (list): List of tuples containing residue number and atom name.
         use_all_heavy (bool): Whether to use all heavy atoms or only CA atoms.
+        rmsf (np.ndarray, optional): RMSF values for each atom.
+        norm_avg_shear_strains (np.ndarray, optional): RMSF-normalized average shear strains.
+        norm_avg_principal_strains (np.ndarray, optional): RMSF-normalized average principal strains.
     """
     # Create data subdirectory if it doesn't exist
     data_dir = os.path.join(output_dir, 'data')
@@ -40,7 +44,41 @@ def write_strain_files(output_dir, shear_strains, principal_strains, avg_shear_s
                 f_principal.write(f'Residue {resid}, Atom {atom_name}: {principal[component]:.4f}\n')
         print(f"Wrote {avg_principal_file}")
 
-    # 3. Write raw strain data in chunks
+    # 3. Write RMSF values if provided
+    if rmsf is not None:
+        print("Writing RMSF values...")
+        rmsf_file = os.path.join(data_dir, 'rmsf.txt')
+        with open(rmsf_file, 'w') as f:
+            f.write("# RMSF values for each atom\n")
+            f.write("# Format: Residue number, Atom name, RMSF (Angstrom)\n")
+            for i, ((resid, atom_name), rmsf_val) in enumerate(zip(atom_info, rmsf)):
+                f.write(f'Residue {resid}, Atom {atom_name}: {rmsf_val:.4f}\n')
+        print(f"Wrote {rmsf_file}")
+
+    # 4. Write normalized average shear strains if provided
+    if norm_avg_shear_strains is not None:
+        print("Writing RMSF-normalized average shear strains...")
+        norm_shear_file = os.path.join(data_dir, 'norm_avg_shear_strains.txt')
+        with open(norm_shear_file, 'w') as f:
+            f.write("# RMSF-normalized average shear strains\n")
+            f.write("# Format: Residue number, Atom name, Normalized shear strain\n")
+            for i, (norm_shear, (resid, atom_name)) in enumerate(zip(norm_avg_shear_strains, atom_info)):
+                f.write(f'Residue {resid}, Atom {atom_name}: {norm_shear:.4f}\n')
+        print(f"Wrote {norm_shear_file}")
+
+    # 5. Write normalized average principal strains if provided
+    if norm_avg_principal_strains is not None:
+        print("Writing RMSF-normalized average principal strains...")
+        for component in range(3):
+            norm_principal_file = os.path.join(data_dir, f'norm_avg_principal_{component+1}.txt')
+            with open(norm_principal_file, 'w') as f:
+                f.write(f"# RMSF-normalized average principal strains (component {component+1})\n")
+                f.write("# Format: Residue number, Atom name, Normalized principal strain\n")
+                for i, (norm_principal, (resid, atom_name)) in enumerate(zip(norm_avg_principal_strains, atom_info)):
+                    f.write(f'Residue {resid}, Atom {atom_name}: {norm_principal[component]:.4f}\n')
+            print(f"Wrote {norm_principal_file}")
+
+    # 6. Write raw strain data in chunks
     chunk_size = 1000  # Adjust based on memory constraints
     n_chunks = (len(shear_strains) + chunk_size - 1) // chunk_size
 
@@ -93,12 +131,21 @@ def write_strain_files(output_dir, shear_strains, principal_strains, avg_shear_s
     print(f"  - avg_principal_1.txt")
     print(f"  - avg_principal_2.txt")
     print(f"  - avg_principal_3.txt")
+    if rmsf is not None:
+        print(f"  - rmsf.txt")
+    if norm_avg_shear_strains is not None:
+        print(f"  - norm_avg_shear_strains.txt")
+    if norm_avg_principal_strains is not None:
+        print(f"  - norm_avg_principal_1.txt")
+        print(f"  - norm_avg_principal_2.txt")
+        print(f"  - norm_avg_principal_3.txt")
     print(f"  - raw_shear_strains.txt")
     print(f"  - raw_principal_1.txt")
     print(f"  - raw_principal_2.txt")
     print(f"  - raw_principal_3.txt")
 
-def write_pdb_with_strains(deformed_pdb, output_dir, residue_numbers, avg_shear_strains, avg_principal_strains, atom_info, use_all_heavy):
+def write_pdb_with_strains(deformed_pdb, output_dir, residue_numbers, avg_shear_strains, avg_principal_strains, atom_info, use_all_heavy,
+                           rmsf=None, norm_avg_shear_strains=None, norm_avg_principal_strains=None):
     """
     Write PDB files with strain data in organized subdirectories.
     """
@@ -122,3 +169,56 @@ def write_pdb_with_strains(deformed_pdb, output_dir, residue_numbers, avg_shear_
                 if atom.resid in residue_numbers and (not use_all_heavy or atom.name != 'H'):
                     atom.tempfactor = 100 * principal_strain[component]
             PDB.write(u.atoms)
+
+        # Frame 5: RMSF (if calculated)
+        if rmsf is not None:
+            for atom in u.atoms:
+                atom.tempfactor = 0.0
+            for atom, (resid, atom_name), rmsf_val in zip(u.atoms, atom_info, rmsf):
+                if atom.resid in residue_numbers and (use_all_heavy or atom.name == 'CA'):
+                    atom.tempfactor = 100 * rmsf_val
+            PDB.write(u.atoms)
+            frame_count += 1
+            
+            with mda.Writer(os.path.join(structures_dir, 'rmsf.pdb')) as single_pdb:
+                single_pdb.write(u.atoms)
+        
+        # Frame 6: Normalized Shear Strains (if calculated)
+        if norm_avg_shear_strains is not None:
+            for atom in u.atoms:
+                atom.tempfactor = 0.0
+            for atom, (resid, atom_name), norm_shear in zip(u.atoms, atom_info, norm_avg_shear_strains):
+                if atom.resid in residue_numbers and (use_all_heavy or atom.name == 'CA'):
+                    atom.tempfactor = 100 * norm_shear
+            PDB.write(u.atoms)
+            frame_count += 1
+            
+            with mda.Writer(os.path.join(structures_dir, 'norm_avg_shear_strains.pdb')) as single_pdb:
+                single_pdb.write(u.atoms)
+        
+        # Frames 7-9: Normalized Principal Strains (if calculated)
+        if norm_avg_principal_strains is not None:
+            for component in range(3):
+                for atom in u.atoms:
+                    atom.tempfactor = 0.0
+                for atom, (resid, atom_name), norm_principal in zip(u.atoms, atom_info, norm_avg_principal_strains):
+                    if atom.resid in residue_numbers and (use_all_heavy or atom.name == 'CA'):
+                        atom.tempfactor = 100 * norm_principal[component]
+                PDB.write(u.atoms)
+                frame_count += 1
+                
+                with mda.Writer(os.path.join(structures_dir, f'norm_avg_principal_{component+1}.pdb')) as single_pdb:
+                    single_pdb.write(u.atoms)
+    
+    print(f"\nCreated multi-frame PDB: {pdb_filename} ({frame_count} frames)")
+    print("Frame contents:")
+    print("  Frame 1: Average shear strains")
+    print("  Frames 2-4: Average principal strains (components 1-3)")
+    if rmsf is not None:
+        print("  Frame 5: RMSF values")
+    if norm_avg_shear_strains is not None:
+        print("  Frame 6: RMSF-normalized average shear strains")
+    if norm_avg_principal_strains is not None:
+        print("  Frames 7-9: RMSF-normalized average principal strains (components 1-3)")
+    
+    print("\nAlso created individual PDB files in structures/ directory")
