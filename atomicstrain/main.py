@@ -84,7 +84,8 @@ def save_run_info(args: argparse.Namespace, output_dir: str) -> None:
         'end': args.end,
         'time_step': args.time_step,
         'use_all_heavy': args.use_all_heavy,
-        'residue_range': args.residue_range
+        'residue_range': args.residue_range,
+        'calculate_rmsf': args.calculate_rmsf  # Add RMSF flag
     }
     
     # Create run info dictionary
@@ -130,7 +131,13 @@ def reconstructed_command(args_dict: Dict[str, Any]) -> str:
         
         # Handle boolean flags
         if isinstance(value, bool):
-            if value:
+            if key == 'calculate_rmsf':
+                # Special handling for RMSF flag
+                if value:
+                    cmd_parts.append("--rmsf")
+                else:
+                    cmd_parts.append("--no-rmsf")
+            elif value:
                 cmd_parts.append(arg_name)
         # Handle all other arguments
         else:
@@ -160,6 +167,13 @@ def main():
     parser.add_argument("--use-all-heavy", action="store_true", help="Use all heavy atoms instead of only CA atoms")
     parser.add_argument("--residue-range", type=str, default="6-97",
                        help="Range of residues to analyze in format 'start-end' (default: '6-97')")
+    
+    # RMSF calculation options
+    parser.add_argument('--rmsf', dest='calculate_rmsf', action='store_true', default=True,
+                       help='Calculate RMSF and normalized strains (default: enabled)')
+    parser.add_argument('--no-rmsf', dest='calculate_rmsf', action='store_false',
+                       help='Disable RMSF calculation')
+    
     args = parser.parse_args()
 
     # Create output directories
@@ -184,6 +198,7 @@ def main():
     print("\n=== Starting Atomic Strain Analysis ===")
     print(f"Run started at: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Output directory: {os.path.abspath(args.output)}")
+    print(f"RMSF calculation: {'enabled' if args.calculate_rmsf else 'disabled'}")
     print("\n=== Loading Structures and Trajectories ===")
 
     # Load universes with trajectories
@@ -260,13 +275,16 @@ def main():
     print(f"Analyzing frames from {start_frame} to {end_frame} with stride {args.stride}")
     print(f"Total frames to be analyzed: {n_frames}")
     print(f"Analyzing residues {start_res} to {end_res}")
+    print(f"Using {'all heavy atoms' if args.use_all_heavy else 'only CA atoms'}")
 
     print("\n=== Running Analysis ===")
-    # Run the analysis
-    strain_analysis = StrainAnalysis(ref, defm, residue_numbers, args.output, args.min_neighbors, 
-                                   n_frames, use_all_heavy=args.use_all_heavy)
+    # Run the analysis with RMSF calculation parameter
+    strain_analysis = StrainAnalysis(
+        ref, defm, residue_numbers, args.output, args.min_neighbors, 
+        n_frames, use_all_heavy=args.use_all_heavy,
+        calculate_rmsf=args.calculate_rmsf  # Pass RMSF flag
+    )
     strain_analysis.run(start=start_frame, stop=end_frame, stride=args.stride)
-
 
     print("\n=== Creating Visualizations ===")
     try:
@@ -275,7 +293,10 @@ def main():
             strain_analysis.results.atom_info,
             strain_analysis.results.final_shear_strains,
             strain_analysis.results.final_principal_strains,
-            args.output
+            args.output,
+            rmsf=strain_analysis.results.rmsf,
+            norm_avg_shear_strains=strain_analysis.results.norm_avg_shear_strains,
+            norm_avg_principal_strains=strain_analysis.results.norm_avg_principal_strains
         )
     except Exception as e:
         print(f"Warning: Error during visualization: {str(e)}")
@@ -287,6 +308,10 @@ def main():
     print(f"Run information saved in: {os.path.join(os.path.abspath(args.output), 'run_info.json')}")
     print("Command to reproduce this analysis saved in: "
           f"{os.path.join(os.path.abspath(args.output), 'run_command.txt')}")
+    
+    if args.calculate_rmsf:
+        print("\nRMSF-normalized strains have been calculated.")
+        print("These account for the natural flexibility of each atom.")
 
 if __name__ == "__main__":
     main()
