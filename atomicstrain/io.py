@@ -156,19 +156,28 @@ def write_pdb_with_strains(deformed_pdb, output_dir, residue_numbers, avg_shear_
     u = mda.Universe(deformed_pdb)
     pdb_filename = os.path.join(structures_dir, 'strains.pdb')
 
+    # Initialize frame count
+    frame_count = 0
+
     with mda.Writer(pdb_filename, multiframe=True, bonds=None, n_atoms=u.atoms.n_atoms) as PDB:
         # Frame 1: Average Shear Strains
+        for atom in u.atoms:
+            atom.tempfactor = 0.0  # Reset all atoms first
         for atom, (resid, atom_name), shear_strain in zip(u.atoms, atom_info, avg_shear_strains):
-            if atom.resid in residue_numbers and (not use_all_heavy or atom.name != 'H'):
+            if atom.resid in residue_numbers and (use_all_heavy or atom.name == 'CA'):
                 atom.tempfactor = 100 * shear_strain
         PDB.write(u.atoms)
+        frame_count += 1
 
-        # Next 3 Frames: Principal Strains
+        # Frames 2-4: Principal Strains
         for component in range(3):
+            for atom in u.atoms:
+                atom.tempfactor = 0.0  # Reset all atoms first
             for atom, (resid, atom_name), principal_strain in zip(u.atoms, atom_info, avg_principal_strains):
-                if atom.resid in residue_numbers and (not use_all_heavy or atom.name != 'H'):
+                if atom.resid in residue_numbers and (use_all_heavy or atom.name == 'CA'):
                     atom.tempfactor = 100 * principal_strain[component]
             PDB.write(u.atoms)
+            frame_count += 1
 
         # Frame 5: RMSF (if calculated)
         if rmsf is not None:
@@ -180,6 +189,7 @@ def write_pdb_with_strains(deformed_pdb, output_dir, residue_numbers, avg_shear_
             PDB.write(u.atoms)
             frame_count += 1
             
+            # Also write individual RMSF PDB
             with mda.Writer(os.path.join(structures_dir, 'rmsf.pdb')) as single_pdb:
                 single_pdb.write(u.atoms)
         
@@ -193,6 +203,7 @@ def write_pdb_with_strains(deformed_pdb, output_dir, residue_numbers, avg_shear_
             PDB.write(u.atoms)
             frame_count += 1
             
+            # Also write individual normalized shear strain PDB
             with mda.Writer(os.path.join(structures_dir, 'norm_avg_shear_strains.pdb')) as single_pdb:
                 single_pdb.write(u.atoms)
         
@@ -207,6 +218,7 @@ def write_pdb_with_strains(deformed_pdb, output_dir, residue_numbers, avg_shear_
                 PDB.write(u.atoms)
                 frame_count += 1
                 
+                # Also write individual normalized principal strain PDB
                 with mda.Writer(os.path.join(structures_dir, f'norm_avg_principal_{component+1}.pdb')) as single_pdb:
                     single_pdb.write(u.atoms)
     
@@ -221,4 +233,26 @@ def write_pdb_with_strains(deformed_pdb, output_dir, residue_numbers, avg_shear_
     if norm_avg_principal_strains is not None:
         print("  Frames 7-9: RMSF-normalized average principal strains (components 1-3)")
     
-    print("\nAlso created individual PDB files in structures/ directory")
+    # Also write individual PDB files for average strains
+    print("\nWriting individual PDB files...")
+    
+    # Average shear strains
+    for atom in u.atoms:
+        atom.tempfactor = 0.0
+    for atom, (resid, atom_name), shear_strain in zip(u.atoms, atom_info, avg_shear_strains):
+        if atom.resid in residue_numbers and (use_all_heavy or atom.name == 'CA'):
+            atom.tempfactor = 100 * shear_strain
+    with mda.Writer(os.path.join(structures_dir, 'avg_shear_strains.pdb')) as single_pdb:
+        single_pdb.write(u.atoms)
+    
+    # Average principal strains
+    for component in range(3):
+        for atom in u.atoms:
+            atom.tempfactor = 0.0
+        for atom, (resid, atom_name), principal_strain in zip(u.atoms, atom_info, avg_principal_strains):
+            if atom.resid in residue_numbers and (use_all_heavy or atom.name == 'CA'):
+                atom.tempfactor = 100 * principal_strain[component]
+        with mda.Writer(os.path.join(structures_dir, f'avg_principal_{component+1}.pdb')) as single_pdb:
+            single_pdb.write(u.atoms)
+    
+    print("\nCreated individual PDB files in structures/ directory")

@@ -60,11 +60,11 @@ class StrainAnalysis(AnalysisBase):
         self.results.atom_info = [(ref_center.resid, ref_center.name) 
                                  for (_, ref_center), _ in self.selections]
         
+        # Initialize RMSF-related attributes only if RMSF calculation is enabled
         if self.calculate_rmsf:
-            self.results._ref_positions = None
-            self.results._positions_sum = np.zeros((n_atoms, 3), dtype=np.float32)
-            self.results._positions_sq_sum = np.zeros((n_atoms, 3), dtype=np.float32)
-            self._first_frame = True
+            # For RMSF, we need to store absolute positions, not displacements
+            self.results._positions_sum = np.zeros((n_atoms, 3), dtype=np.float64)
+            self.results._positions_sq_sum = np.zeros((n_atoms, 3), dtype=np.float64)
         
         self._frame_counter = 0
 
@@ -98,17 +98,14 @@ class StrainAnalysis(AnalysisBase):
         self.results.shear_strains[self._frame_counter] = frame_shear
         self.results.principal_strains[self._frame_counter] = frame_principal
 
+        # Calculate RMSF if enabled
         if self.calculate_rmsf:
-            current_positions = np.array([defm_center.position for (_, _), (_, defm_center) in self.selections], dtype=np.float32)
-
-            if self._first_frame:
-                self.results._ref_positions = current_positions.copy()
-                self._first_frame = False
-
-            displacements = current_positions - self.results._ref_positions
-
-            self.results._positions_sum += displacements
-            self.results._positions_sq_sum += displacements ** 2
+            # Get current positions of deformed centers
+            current_positions = def_centers
+            
+            # Add to running sums for RMSF calculation
+            self.results._positions_sum += current_positions
+            self.results._positions_sq_sum += current_positions ** 2
         
         # Flush less frequently
         if self._frame_counter % 1000 == 0:
@@ -158,6 +155,7 @@ class StrainAnalysis(AnalysisBase):
             if self.has_ref_trajectory:
                 print("Using reference trajectory")
             print(f"Number of atoms to analyze: {len(self.selections)}")
+            print(f"RMSF calculation: {'enabled' if self.calculate_rmsf else 'disabled'}")
             
             # Memory usage estimate
             mem_per_frame = (len(self.selections) * 4 * 4)  # 4 bytes per float32, 4 values per atom
@@ -223,11 +221,14 @@ class StrainAnalysis(AnalysisBase):
             n_frames = self._frame_counter
             
             # Calculate mean positions
-            mean_displacements = self.results._positions_sum / n_frames
-            mean_sq_displacements = self.results._positions_sq_sum / n_frames
+            mean_positions = self.results._positions_sum / n_frames
             
-            # Calculate variance
-            variance = mean_sq_displacements - mean_displacements ** 2
+            # Calculate mean of squared positions
+            mean_sq_positions = self.results._positions_sq_sum / n_frames
+            
+            # Calculate variance: Var(X) = E[X^2] - E[X]^2
+            variance = mean_sq_positions - mean_positions ** 2
+            
             # Handle numerical errors (variance should never be negative)
             variance = np.maximum(variance, 0)
             
