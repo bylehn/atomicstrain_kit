@@ -25,6 +25,7 @@ def write_strain_files(output_dir, shear_strains, principal_strains, avg_shear_s
 
     # 1. Write average shear strains
     print("Writing average shear strains...")
+    print("If you can see this then updates to the code are working!")
     avg_shear_strains_file = os.path.join(data_dir, 'avg_shear_strains.txt')
     with open(avg_shear_strains_file, 'w') as f_shear:
         f_shear.write("# Average shear strains for each residue\n")
