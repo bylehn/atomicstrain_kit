@@ -8,8 +8,7 @@ def plot_strain_histograms(shear_strains, principal_strains, output_dir, chunk_s
     os.makedirs(figures_dir, exist_ok=True)
     
     # Process shear strains in chunks
-    plt.figure(figsize=(20, 6))
-    ax1, ax2 = plt.subplots(1, 2, figsize=(20, 6))
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 6))
     
     # Initialize empty lists for accumulating data
     all_shear = []
@@ -43,8 +42,7 @@ def plot_strain_histograms(shear_strains, principal_strains, output_dir, chunk_s
 
     # Process principal strains in chunks
     for i in range(3):
-        plt.figure(figsize=(20, 6))
-        ax1, ax2 = plt.subplots(1, 2, figsize=(20, 6))
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 6))
         
         all_principal = []
         all_log_principal = []

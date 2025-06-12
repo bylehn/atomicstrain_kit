@@ -63,8 +63,8 @@ class StrainAnalysis(AnalysisBase):
         # Initialize RMSF-related attributes only if RMSF calculation is enabled
         if self.calculate_rmsf:
             # For RMSF, we need to store absolute positions, not displacements
-            self.results._positions_sum = np.zeros((n_atoms, 3), dtype=np.float64)
-            self.results._positions_sq_sum = np.zeros((n_atoms, 3), dtype=np.float64)
+            self.results._positions_sum = np.zeros((n_atoms, 3), dtype=np.float32)
+            self.results._positions_sq_sum = np.zeros((n_atoms, 3), dtype=np.float32)
         
         self._frame_counter = 0
 
