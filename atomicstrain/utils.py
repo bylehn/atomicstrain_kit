@@ -64,6 +64,9 @@ def create_selections(ref, defm, residue_numbers, min_neighbors=3, use_all_heavy
             defm_center = defm_residue_atoms[i]
             
             print(f"Resid {resid}, Atom {ref_atom.name}: Ref atoms: {len(ref_selection)}, Defm atoms: {len(defm_selection)}")
+            n_neighbors = np.sum(distances[i] <= R) - 1  # -1 to exclude self
+            if n_neighbors < 4:
+                print(f"Warning: Resid {resid} has only {n_neighbors} neighbors within radius {R:.2f}")
             
             selections.append(((ref_selection, ref_center), (defm_selection, defm_center)))
     

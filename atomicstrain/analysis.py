@@ -72,26 +72,26 @@ class StrainAnalysis(AnalysisBase):
         if self.has_ref_trajectory:
             self.ref.trajectory[self._frame_index]
 
-        # Pre-allocate numpy arrays instead of lists
-        n_selections = len(self.selections)
-        ref_positions = np.zeros((n_selections, self.min_neighbors, 3), dtype=np.float32)
-        ref_centers = np.zeros((n_selections, 3), dtype=np.float32)
-        def_positions = np.zeros((n_selections, self.min_neighbors, 3), dtype=np.float32)
-        def_centers = np.zeros((n_selections, 3), dtype=np.float32)
+        # Remove the pre-allocated arrays and use lists instead
+        ref_positions_list = []
+        ref_centers_list = []
+        def_positions_list = []
+        def_centers_list = []
 
-        # Fill arrays directly
+        # Collect all positions for each atom
         for i, ((ref_sel, ref_center), (defm_sel, defm_center)) in enumerate(self.selections):
-            ref_positions[i, :len(ref_sel.positions)] = ref_sel.positions[:self.min_neighbors]
-            ref_centers[i] = ref_center.position
-            def_positions[i, :len(defm_sel.positions)] = defm_sel.positions[:self.min_neighbors]
-            def_centers[i] = defm_center.position
+            # Use ALL atoms in the selection, not just min_neighbors
+            ref_positions_list.append(ref_sel.positions)
+            ref_centers_list.append(ref_center.position)
+            def_positions_list.append(defm_sel.positions)
+            def_centers_list.append(defm_center.position)
 
-        # Process frame with pre-allocated arrays
+        # Process frame with lists of variable-sized arrays
         frame_shear, frame_principal = process_frame_data(
-            ref_positions,
-            ref_centers,
-            def_positions,
-            def_centers
+            ref_positions_list,
+            ref_centers_list,
+            def_positions_list,
+            def_centers_list
         )
 
         # Store results
@@ -101,7 +101,7 @@ class StrainAnalysis(AnalysisBase):
         # Calculate RMSF if enabled
         if self.calculate_rmsf:
             # Get current positions of deformed centers
-            current_positions = def_centers
+            current_positions = np.array(def_centers_list)
             
             # Add to running sums for RMSF calculation
             self.results._positions_sum += current_positions

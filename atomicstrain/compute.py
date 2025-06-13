@@ -54,31 +54,56 @@ def _compute_batch_strain(ref_pos_batch, def_pos_batch):
     
     return shear, jnp.sort(eigenvalues, axis=1)[:, ::-1]
 
-def process_frame_data(ref_positions, ref_centers, def_positions, def_centers):
-    """Process all positions for a frame efficiently with batching."""
-    n_atoms = len(ref_positions)
+def process_frame_data(ref_positions_list, ref_centers_list, def_positions_list, def_centers_list):
+    """Process all positions for a frame with variable neighbor counts."""
+    n_atoms = len(ref_positions_list)
     shear_strains = np.zeros(n_atoms, dtype=np.float32)
     principal_strains = np.zeros((n_atoms, 3), dtype=np.float32)
 
-    # Filter valid positions (length >= 3)
-    valid_indices = [i for i in range(n_atoms) if len(ref_positions[i]) >= 3]
-    
-    if not valid_indices:
-        return shear_strains, principal_strains
-
-    # Prepare batch data
-    ref_batch = jnp.array([ref_positions[i] - ref_centers[i] for i in valid_indices], dtype=jnp.float32)
-    def_batch = jnp.array([def_positions[i] - def_centers[i] for i in valid_indices], dtype=jnp.float32)
-    
-    # Single GPU computation for entire batch
-    shear_batch, principal_batch = _compute_batch_strain(ref_batch, def_batch)
-    
-    # Back to CPU and assign results
-    shear_batch = np.asarray(shear_batch)
-    principal_batch = np.asarray(principal_batch)
-    
-    for idx, orig_idx in enumerate(valid_indices):
-        shear_strains[orig_idx] = shear_batch[idx]
-        principal_strains[orig_idx] = principal_batch[idx]
+    # Process each atom individually
+    for i in range(n_atoms):
+        ref_pos = ref_positions_list[i]
+        def_pos = def_positions_list[i]
+        ref_center = ref_centers_list[i]
+        def_center = def_centers_list[i]
+        
+        # Check if we have enough neighbors (at least 4 for 3D stability)
+        if len(ref_pos) < 4:
+            print(f"Warning: Atom {i} has only {len(ref_pos)} neighbors (need at least 4)")
+            # Set to NaN to indicate problematic calculation
+            shear_strains[i] = np.nan
+            principal_strains[i] = np.nan
+            continue
+            
+        # Center the positions
+        A = ref_pos - ref_center
+        B = def_pos - def_center
+        
+        try:
+            # Convert to JAX arrays
+            A_jax = jnp.array(A, dtype=jnp.float32)
+            B_jax = jnp.array(B, dtype=jnp.float32)
+            
+            # Check condition number before proceeding
+            AtA = A_jax.T @ A_jax
+            cond_num = np.linalg.cond(AtA)
+            
+            if cond_num > 1e10:
+                print(f"Warning: Atom {i} has poorly conditioned matrix (condition number: {cond_num:.2e})")
+                shear_strains[i] = np.nan
+                principal_strains[i] = np.nan
+                continue
+            
+            # Compute strain
+            shear, principal = _compute_single_strain(A_jax, B_jax)
+            
+            # Convert back to numpy and store
+            shear_strains[i] = float(shear)
+            principal_strains[i] = np.array(principal)
+            
+        except Exception as e:
+            print(f"Error computing strain for atom {i}: {str(e)}")
+            shear_strains[i] = np.nan
+            principal_strains[i] = np.nan
 
     return shear_strains, principal_strains
