@@ -167,6 +167,7 @@ def main():
     parser.add_argument("--use-all-heavy", action="store_true", help="Use all heavy atoms instead of only CA atoms")
     parser.add_argument("--residue-range", type=str, default="6-97",
                        help="Range of residues to analyze in format 'start-end' (default: '6-97')")
+    parser.add_argument("--profile", action="store_true", help="Enable performance profiling")
     
     # RMSF calculation options
     parser.add_argument('--rmsf', dest='calculate_rmsf', action='store_true', default=True,
@@ -278,13 +279,56 @@ def main():
     print(f"Using {'all heavy atoms' if args.use_all_heavy else 'only CA atoms'}")
 
     print("\n=== Running Analysis ===")
-    # Run the analysis with RMSF calculation parameter
-    strain_analysis = StrainAnalysis(
-        ref, defm, residue_numbers, args.output, args.min_neighbors, 
-        n_frames, use_all_heavy=args.use_all_heavy,
-        calculate_rmsf=args.calculate_rmsf  # Pass RMSF flag
-    )
-    strain_analysis.run(start=start_frame, stop=end_frame, stride=args.stride)
+    # Enable profiling mode
+    profiling_enabled = True  # You can make this a command-line argument if you want
+
+    if profiling_enabled:
+        print("Profiling mode enabled - will show timing breakdown")
+        # Pass profiling flag to StrainAnalysis
+        strain_analysis = StrainAnalysis(
+            ref, defm, residue_numbers, args.output, args.min_neighbors, 
+            n_frames, use_all_heavy=args.use_all_heavy,
+            calculate_rmsf=args.calculate_rmsf,
+            profiling=True  # Add this parameter
+        )
+    else:
+        strain_analysis = StrainAnalysis(
+            ref, defm, residue_numbers, args.output, args.min_neighbors, 
+            n_frames, use_all_heavy=args.use_all_heavy,
+            calculate_rmsf=args.calculate_rmsf
+        )
+
+    # Run the analysis
+    timing_stats = strain_analysis.run(start=start_frame, stop=end_frame, stride=args.stride)
+
+    # Print timing report if profiling was enabled
+    if profiling_enabled and timing_stats:
+        print("\n=== Performance Analysis Report ===")
+        total_time = timing_stats.get('total', 0)
+        n_frames_analyzed = timing_stats.get('n_frames', 0)
+        
+        if total_time > 0:
+            print(f"Total frames analyzed: {n_frames_analyzed}")
+            print(f"Total time: {total_time:.2f}s")
+            print(f"Average speed: {n_frames_analyzed/total_time:.1f} it/s")
+            print(f"Average time per frame: {total_time/n_frames_analyzed*1000:.2f} ms")
+            
+            print("\nTime breakdown:")
+            components = ['trajectory_read', 'kdtree_build', 'neighbor_search', 
+                        'strain_compute', 'data_storage', 'other']
+            
+            for component in components:
+                time_spent = timing_stats.get(component, 0)
+                percentage = (time_spent / total_time) * 100 if total_time > 0 else 0
+                print(f"  {component:20s}: {time_spent:8.2f}s ({percentage:5.1f}%)")
+            
+            # If strain computation details are available
+            if 'compute_details' in timing_stats:
+                print("\nStrain computation breakdown:")
+                compute_total = timing_stats.get('strain_compute', 0)
+                for key, value in timing_stats['compute_details'].items():
+                    pct = (value / compute_total) * 100 if compute_total > 0 else 0
+                    print(f"    {key:18s}: {value:8.2f}s ({pct:5.1f}%)")
 
     print("\n=== Creating Visualizations ===")
     try:

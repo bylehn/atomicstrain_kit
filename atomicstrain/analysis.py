@@ -5,10 +5,13 @@ from .utils import create_selections
 from .io import write_strain_files, write_pdb_with_strains
 from tqdm import tqdm
 import os
+from collections import defaultdict
+import time
+from . import compute
 
 class StrainAnalysis(AnalysisBase):
     def __init__(self, reference, deformed, residue_numbers, output_dir, min_neighbors=3, n_frames=None, use_all_heavy=False,
-                 calculate_rmsf=True, **kwargs):
+                 calculate_rmsf=True, profiling=False, **kwargs):
         self.ref = reference
         self.defm = deformed
         self.residue_numbers = residue_numbers
@@ -18,6 +21,10 @@ class StrainAnalysis(AnalysisBase):
         self.selections = create_selections(self.ref, self.defm, residue_numbers, min_neighbors, use_all_heavy)
         self.output_dir = output_dir
         self.has_ref_trajectory = hasattr(self.ref, 'trajectory') and len(self.ref.trajectory) > 1
+        self.profiling = profiling
+        self.timing_stats = defaultdict(float) if profiling else None
+        if profiling:
+            compute.enable_profiling()
         
         # Create necessary directories
         os.makedirs(output_dir, exist_ok=True)
@@ -67,12 +74,28 @@ class StrainAnalysis(AnalysisBase):
             self.results._positions_sq_sum = np.zeros((n_atoms, 3), dtype=np.float32)
         
         self._frame_counter = 0
+        
+        # Initialize profiling progress tracking
+        if self.profiling:
+            self._profile_start_time = time.time()
+            self._last_profile_report = 0
 
     def _single_frame(self):
+        if self.profiling:
+            frame_start = time.time()
+            
+        # Time trajectory operations
+        if self.profiling:
+            t0 = time.time()
+            
         if self.has_ref_trajectory:
             self.ref.trajectory[self._frame_index]
 
-        # Remove the pre-allocated arrays and use lists instead
+        if self.profiling:
+            self.timing_stats['ref_trajectory'] += time.time() - t0
+            t1 = time.time()
+
+        # Time position collection
         ref_positions_list = []
         ref_centers_list = []
         def_positions_list = []
@@ -86,7 +109,11 @@ class StrainAnalysis(AnalysisBase):
             def_positions_list.append(defm_sel.positions)
             def_centers_list.append(defm_center.position)
 
-        # Process frame with lists of variable-sized arrays
+        if self.profiling:
+            self.timing_stats['position_collection'] += time.time() - t1
+            t2 = time.time()
+
+        # Time strain computation
         frame_shear, frame_principal = process_frame_data(
             ref_positions_list,
             ref_centers_list,
@@ -94,7 +121,16 @@ class StrainAnalysis(AnalysisBase):
             def_centers_list
         )
 
-        # Store results
+        if self.profiling:
+            self.timing_stats['strain_compute'] += time.time() - t2
+
+            # Print compute profiling every 1000 frames
+            if self._frame_counter % 1000 == 999:
+                compute.print_compute_profile()
+                compute.reset_compute_profile()
+            t3 = time.time()
+
+        # Time data storage
         self.results.shear_strains[self._frame_counter] = frame_shear
         self.results.principal_strains[self._frame_counter] = frame_principal
 
@@ -107,12 +143,55 @@ class StrainAnalysis(AnalysisBase):
             self.results._positions_sum += current_positions
             self.results._positions_sq_sum += current_positions ** 2
         
+        if self.profiling:
+            self.timing_stats['data_storage'] += time.time() - t3
+            
         # Flush less frequently
         if self._frame_counter % 1000 == 0:
+            if self.profiling:
+                t4 = time.time()
+            
             self.results.shear_strains.flush()
             self.results.principal_strains.flush()
+            
+            if self.profiling:
+                self.timing_stats['memmap_flush'] += time.time() - t4
         
         self._frame_counter += 1
+        
+        if self.profiling:
+            # Update total frame time
+            frame_time = time.time() - frame_start
+            self.timing_stats['total'] += frame_time
+            self.timing_stats['n_frames'] = self._frame_counter
+            
+            # Print progress report every 1000 frames
+            if self._frame_counter - self._last_profile_report >= 1000:
+                self._print_profile_progress()
+                self._last_profile_report = self._frame_counter
+    
+    def _print_profile_progress(self):
+        """Print profiling progress report."""
+        elapsed = time.time() - self._profile_start_time
+        fps = self._frame_counter / elapsed
+        
+        print(f"\n=== Profiling Progress (Frame {self._frame_counter}) ===")
+        print(f"Speed: {fps:.1f} frames/s")
+        print("Time breakdown (% of total):")
+        
+        total = self.timing_stats['total']
+        components = ['ref_trajectory', 'position_collection', 'strain_compute', 
+                     'data_storage', 'memmap_flush']
+        
+        for comp in components:
+            time_spent = self.timing_stats.get(comp, 0)
+            pct = (time_spent / total * 100) if total > 0 else 0
+            print(f"  {comp:20s}: {pct:5.1f}%")
+        
+        # Calculate unaccounted time
+        accounted = sum(self.timing_stats.get(c, 0) for c in components)
+        other_pct = ((total - accounted) / total * 100) if total > 0 else 0
+        print(f"  {'other':20s}: {other_pct:5.1f}%")
         
     def run(self, start=None, stop=None, stride=None, verbose=True):
         """
@@ -131,8 +210,8 @@ class StrainAnalysis(AnalysisBase):
 
         Returns
         -------
-        self : StrainAnalysis
-            Return self to allow for method chaining
+        self : StrainAnalysis or dict
+            Return self to allow for method chaining, or timing stats if profiling
         """
         # Store parameters
         self.start = start
@@ -156,6 +235,8 @@ class StrainAnalysis(AnalysisBase):
                 print("Using reference trajectory")
             print(f"Number of atoms to analyze: {len(self.selections)}")
             print(f"RMSF calculation: {'enabled' if self.calculate_rmsf else 'disabled'}")
+            if self.profiling:
+                print("Profiling: ENABLED")
             
             # Memory usage estimate
             mem_per_frame = (len(self.selections) * 4 * 4)  # 4 bytes per float32, 4 values per atom
@@ -165,7 +246,6 @@ class StrainAnalysis(AnalysisBase):
             print("\nStarting analysis...")
 
         try:
-            import time
             start_time = time.time()
             
             # Run the analysis
@@ -179,10 +259,32 @@ class StrainAnalysis(AnalysisBase):
                 print(f"Average processing speed: {frames_per_second:.2f} frames/second")
                 
                 # Memory usage report
-                import psutil
-                process = psutil.Process()
-                memory_usage = process.memory_info().rss / (1024 * 1024)  # Convert to MB
-                print(f"Final memory usage: {memory_usage:.2f} MB")
+                try:
+                    import psutil
+                    process = psutil.Process()
+                    memory_usage = process.memory_info().rss / (1024 * 1024)  # Convert to MB
+                    print(f"Final memory usage: {memory_usage:.2f} MB")
+                except ImportError:
+                    pass
+            
+            # Return timing stats if profiling
+            if self.profiling:
+                # Calculate other time
+                total_time = self.timing_stats['total']
+                accounted_time = sum(self.timing_stats[k] for k in 
+                                   ['ref_trajectory', 'position_collection', 
+                                    'strain_compute', 'data_storage', 'memmap_flush'])
+                self.timing_stats['other'] = total_time - accounted_time
+                
+                # Try to get compute details if available
+                try:
+                    from . import compute
+                    if hasattr(compute, 'compute_timings'):
+                        self.timing_stats['compute_details'] = dict(compute.compute_timings)
+                except:
+                    pass
+                
+                return dict(self.timing_stats)
             
             return result
             
@@ -208,6 +310,28 @@ class StrainAnalysis(AnalysisBase):
             raise
 
     def _conclude(self):
+        # Print final profiling report if enabled
+        if self.profiling:
+            compute.print_compute_profile()
+            print("\n=== Final Profiling Report ===")
+            total_time = self.timing_stats['total']
+            n_frames = self.timing_stats['n_frames']
+            
+            print(f"Total frames analyzed: {n_frames}")
+            print(f"Total time: {total_time:.2f}s")
+            print(f"Average speed: {n_frames/total_time:.1f} frames/s")
+            print(f"Average time per frame: {total_time/n_frames*1000:.2f} ms")
+            
+            print("\nDetailed time breakdown:")
+            components = ['ref_trajectory', 'position_collection', 'strain_compute', 
+                         'data_storage', 'memmap_flush', 'other']
+            
+            for component in components:
+                time_spent = self.timing_stats.get(component, 0)
+                percentage = (time_spent / total_time) * 100 if total_time > 0 else 0
+                per_frame = time_spent / n_frames * 1000  # ms per frame
+                print(f"  {component:20s}: {time_spent:8.2f}s ({percentage:5.1f}%) - {per_frame:6.2f} ms/frame")
+        
         # Ensure all data is written
         self.results.shear_strains.flush()
         self.results.principal_strains.flush()
