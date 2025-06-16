@@ -1,109 +1,106 @@
-# compute.py
+# compute.py - Optimized version for maximum CPU performance
+import os
+os.environ['JAX_PLATFORM_NAME'] = 'cpu'
+
 import jax
 import jax.numpy as jnp
-from jax import jit, grad, vmap
-from jax.scipy.linalg import eigh
-from jax import config
+from jax import jit, vmap
 import numpy as np
 
-# Check available devices and select appropriate platform
-def get_available_platform():
-    backends = [backend.platform for backend in jax.devices()]
-    if 'gpu' in backends:
-        return 'gpu'
-    elif 'tpu' in backends:
-        return 'tpu'
-    else:
-        return 'cpu'
+print("Using JAX on CPU with vectorized operations")
+print(f"JAX devices: {jax.devices()}")
 
-# Configure JAX to use the available platform
-platform = get_available_platform()
-config.update('jax_platform_name', platform)
-print(f"Using {platform.upper()} for computations")
-
-# Use 32-bit precision for better performance
-config.update("jax_enable_x64", False)
-
-print("Available devices:", jax.devices())
-
-# JIT compile core computations
+# Vectorized strain computation for multiple atoms at once
 @jit
-def _compute_single_strain(A, B):
-    """Core computation for a single strain tensor."""
-    D = jnp.linalg.inv(A.T @ A)
-    C = B @ B.T - A @ A.T
-    Q = 0.5 * (D @ A.T @ C @ A @ D)
-    Q = 0.5 * (Q + Q.T)  # Ensure symmetry
+def compute_strain_batch(A_batch, B_batch):
+    """
+    Compute strain for multiple atoms in parallel.
+    A_batch, B_batch: (n_atoms, max_neighbors, 3)
+    Returns: shear_strains (n_atoms,), principal_strains (n_atoms, 3)
+    """
+    # Compute F = B^T @ pinv(A^T) for each atom
+    def compute_single(A, B):
+        F = B.T @ jnp.linalg.pinv(A.T, rcond=1e-6)
+        C = F.T @ F
+        E = 0.5 * (C - jnp.eye(3))
+        E = 0.5 * (E + E.T)
+        
+        eigenvalues = jnp.linalg.eigvalsh(E)
+        shear = jnp.trace(E @ E) - (1/3) * jnp.square(jnp.trace(E))
+        
+        return shear, jnp.sort(eigenvalues)[::-1]
     
-    # Compute strains in the same function to reduce overhead
-    eigenvalues = jnp.linalg.eigvalsh(Q)
-    shear = jnp.trace(Q @ Q) - (1/3) * jnp.square(jnp.trace(Q))
+    # Vectorize over the batch dimension
+    compute_vectorized = vmap(compute_single)
+    shears, principals = compute_vectorized(A_batch, B_batch)
     
-    return shear, jnp.sort(eigenvalues)[::-1]
+    return shears, principals
 
-@jit
-def _compute_batch_strain(ref_pos_batch, def_pos_batch):
-    """Vectorized computation for a batch of strain tensors."""
-    D = jnp.linalg.inv(ref_pos_batch.transpose((0, 2, 1)) @ ref_pos_batch)
-    C = def_pos_batch @ def_pos_batch.transpose((0, 2, 1)) - ref_pos_batch @ ref_pos_batch.transpose((0, 2, 1))
-    Q = 0.5 * (D @ ref_pos_batch.transpose((0, 2, 1)) @ C @ ref_pos_batch @ D)
-    Q = 0.5 * (Q + Q.transpose((0, 2, 1)))
-    
-    eigenvalues = vmap(jnp.linalg.eigvalsh)(Q)
-    shear = jnp.trace(Q @ Q, axis1=1, axis2=2) - (1/3) * jnp.square(jnp.trace(Q, axis1=1, axis2=2))
-    
-    return shear, jnp.sort(eigenvalues, axis=1)[:, ::-1]
+# Pre-compile for common neighbor counts
+print("Pre-compiling JAX functions...")
+for n_neighbors in [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]:
+    dummy_A = jnp.ones((10, n_neighbors, 3), dtype=jnp.float32)
+    dummy_B = jnp.ones((10, n_neighbors, 3), dtype=jnp.float32)
+    try:
+        _ = compute_strain_batch(dummy_A, dummy_B)
+    except:
+        pass
 
 def process_frame_data(ref_positions_list, ref_centers_list, def_positions_list, def_centers_list):
-    """Process all positions for a frame with variable neighbor counts."""
+    """Process all positions for a frame with maximum efficiency."""
     n_atoms = len(ref_positions_list)
     shear_strains = np.zeros(n_atoms, dtype=np.float32)
     principal_strains = np.zeros((n_atoms, 3), dtype=np.float32)
-
-    # Process each atom individually
+    
+    # Group atoms by number of neighbors for batch processing
+    atoms_by_neighbors = {}
     for i in range(n_atoms):
-        ref_pos = ref_positions_list[i]
-        def_pos = def_positions_list[i]
-        ref_center = ref_centers_list[i]
-        def_center = def_centers_list[i]
-        
-        # Check if we have enough neighbors (at least 4 for 3D stability)
-        if len(ref_pos) < 4:
-            print(f"Warning: Atom {i} has only {len(ref_pos)} neighbors (need at least 4)")
-            # Set to NaN to indicate problematic calculation
+        n_neighbors = len(ref_positions_list[i])
+        if n_neighbors < 4:
             shear_strains[i] = np.nan
-            principal_strains[i] = np.nan
+            principal_strains[i, :] = np.nan
             continue
-            
-        # Center the positions
-        A = ref_pos - ref_center
-        B = def_pos - def_center
+        
+        if n_neighbors not in atoms_by_neighbors:
+            atoms_by_neighbors[n_neighbors] = []
+        atoms_by_neighbors[n_neighbors].append(i)
+    
+    # Process each group in batches
+    for n_neighbors, atom_indices in atoms_by_neighbors.items():
+        if not atom_indices:
+            continue
+        
+        n_atoms_group = len(atom_indices)
+        
+        # Prepare batch arrays
+        A_batch = np.zeros((n_atoms_group, n_neighbors, 3), dtype=np.float32)
+        B_batch = np.zeros((n_atoms_group, n_neighbors, 3), dtype=np.float32)
+        
+        # Fill batch arrays
+        for j, i in enumerate(atom_indices):
+            A_batch[j] = ref_positions_list[i] - ref_centers_list[i]
+            B_batch[j] = def_positions_list[i] - def_centers_list[i]
         
         try:
-            # Convert to JAX arrays
-            A_jax = jnp.array(A, dtype=jnp.float32)
-            B_jax = jnp.array(B, dtype=jnp.float32)
+            # Convert to JAX and compute all at once
+            A_jax = jnp.asarray(A_batch)
+            B_jax = jnp.asarray(B_batch)
             
-            # Check condition number before proceeding
-            AtA = A_jax.T @ A_jax
-            cond_num = np.linalg.cond(AtA)
+            # Compute strain for all atoms in this group
+            shears, principals = compute_strain_batch(A_jax, B_jax)
             
-            if cond_num > 1e10:
-                print(f"Warning: Atom {i} has poorly conditioned matrix (condition number: {cond_num:.2e})")
-                shear_strains[i] = np.nan
-                principal_strains[i] = np.nan
-                continue
+            # Store results
+            shears_np = np.asarray(shears)
+            principals_np = np.asarray(principals)
             
-            # Compute strain
-            shear, principal = _compute_single_strain(A_jax, B_jax)
-            
-            # Convert back to numpy and store
-            shear_strains[i] = float(shear)
-            principal_strains[i] = np.array(principal)
-            
+            for j, i in enumerate(atom_indices):
+                shear_strains[i] = shears_np[j]
+                principal_strains[i] = principals_np[j]
+                
         except Exception as e:
-            print(f"Error computing strain for atom {i}: {str(e)}")
-            shear_strains[i] = np.nan
-            principal_strains[i] = np.nan
-
+            # Fallback for any errors
+            for i in atom_indices:
+                shear_strains[i] = np.nan
+                principal_strains[i, :] = np.nan
+    
     return shear_strains, principal_strains
