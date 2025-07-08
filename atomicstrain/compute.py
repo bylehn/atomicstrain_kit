@@ -1,44 +1,51 @@
-# compute.py - Final optimized CPU version
+# compute.py - Highly optimized CPU version
 import numpy as np
 from scipy.linalg import inv
 from collections import defaultdict
 from multiprocessing import Pool, cpu_count
+from numba import njit, prange
+import warnings
 
-def _compute_single_strain(A, B):
-    """Core computation for a single strain tensor using numpy."""
-    ATA = np.dot(A.T, A)
-    D = inv(ATA)
-    C = np.dot(B, B.T) - np.dot(A, A.T)
-    Q = 0.5 * np.dot(np.dot(np.dot(D, A.T), C), np.dot(A, D))
-    Q = 0.5 * (Q + Q.T)
-    eigenvalues, _ = np.linalg.eigh(Q)
-    eigenvalues = np.sort(eigenvalues)[::-1]
-    shear = np.trace(np.dot(Q, Q)) - (1/3) * np.square(np.trace(Q))
-    return shear, eigenvalues
+# Suppress warnings from potential numerical issues
+warnings.filterwarnings('ignore')
 
-def process_batch_parallel(task_data):
-    """Parallel worker function for processing batches."""
-    batch_indices, ref_pos_batch, def_pos_batch, count = task_data
-    results = []
-
-    for j in range(len(batch_indices)):
-        idx = batch_indices[j]
-        # Extract only the valid portion (non-padded part)
-        A = ref_pos_batch[j, :count]
-        B = def_pos_batch[j, :count]
-
-        try:
-            shear, principal = _compute_single_strain(A, B)
-            results.append((idx, shear, principal))
-        except Exception as e:
-            print(f"Error computing strain: {str(e)}")
-            results.append((idx, np.nan, np.array([np.nan, np.nan, np.nan])))
-
-    return results
-
-def process_frame_data(ref_positions_list, ref_centers_list, def_positions_list, def_centers_list, parallel=False):
+@njit(fastmath=True, cache=True)
+def _compute_single_strain_numba(A, B):
     """
-    Optimized CPU version with optional parallel processing.
+    Numba-optimized version of the strain computation.
+    Uses Numba's @njit decorator to compile to machine code.
+    """
+    try:
+        # Compute A.T @ A
+        ATA = A.T @ A
+        # Compute inverse (Numba's implementation will be fast)
+        D = np.linalg.inv(ATA)
+        # Compute C = B@B.T - A@A.T
+        C = B @ B.T - A @ A.T
+        # Compute Q matrix
+        temp1 = D @ A.T
+        temp2 = temp1 @ C
+        Q = 0.5 * (temp2 @ A @ D)
+        Q = 0.5 * (Q + Q.T)  # Ensure symmetry
+
+        # Compute eigenvalues and sort in descending order
+        eigenvalues = np.linalg.eigh(Q)[0]
+        # Manual sort for eigenvalues since Numba doesn't support numpy's sort well
+        sorted_eigenvalues = np.sort(eigenvalues)[::-1]
+
+        # Compute shear strain
+        trace_Q = np.trace(Q)
+        trace_Q2 = np.trace(Q @ Q)
+        shear = trace_Q2 - (1/3) * (trace_Q ** 2)
+
+        return shear, sorted_eigenvalues
+    except Exception:
+        # Return NaNs if computation fails
+        return np.nan, np.array([np.nan, np.nan, np.nan])
+
+def process_frame_data(ref_positions_list, ref_centers_list, def_positions_list, def_centers_list, parallel=False, batch_size=100):
+    """
+    Highly optimized version with multiple techniques for speed improvement.
 
     Args:
         ref_positions_list: List of reference positions for each atom
@@ -46,100 +53,82 @@ def process_frame_data(ref_positions_list, ref_centers_list, def_positions_list,
         def_positions_list: List of deformed positions for each atom
         def_centers_list: List of deformed centers for each atom
         parallel: If True, use multiprocessing (default: False)
-
-    Returns:
-        Tuple of shear strains and principal strains arrays
+        batch_size: Number of atoms to process in each batch (for parallel processing)
     """
     n_atoms = len(ref_positions_list)
     shear_strains = np.zeros(n_atoms, dtype=np.float32)
     principal_strains = np.zeros((n_atoms, 3), dtype=np.float32)
 
-    # First process atoms with sufficient neighbors in batches by count
-    count_to_indices = defaultdict(list)
+    # Pre-process: center positions and count neighbors
+    centered_ref_pos = []
+    centered_def_pos = []
     neighbor_counts = []
+    valid_atoms = []
 
-    # Collect neighbor counts and group indices
     for i in range(n_atoms):
-        count = len(ref_positions_list[i])
+        ref_pos = ref_positions_list[i]
+        def_pos = def_positions_list[i]
+        ref_center = ref_centers_list[i]
+        def_center = def_centers_list[i]
+
+        count = len(ref_pos)
         neighbor_counts.append(count)
-        if count >= 4:
-            count_to_indices[count].append(i)
 
-    # For atoms with insufficient neighbors
-    for i in range(n_atoms):
-        if neighbor_counts[i] < 4:
+        if count >= 4:
+            valid_atoms.append(i)
+            centered_ref_pos.append(ref_pos - ref_center)
+            centered_def_pos.append(def_pos - def_center)
+        else:
             shear_strains[i] = np.nan
             principal_strains[i] = np.nan
 
-    if not count_to_indices:
+    if not valid_atoms:
         return shear_strains, principal_strains
 
+    # Group by neighbor count for batch processing
+    count_to_indices = defaultdict(list)
+    for i, atom_idx in enumerate(valid_atoms):
+        count = len(centered_ref_pos[i])
+        count_to_indices[count].append((atom_idx, i))  # Store original atom index and position in valid_atoms
+
     if parallel:
-        # Parallel processing version
+        # Parallel processing version with optimized batching
+        def process_task(task):
+            count, indices = task
+            results = []
+            for atom_idx, valid_idx in indices:
+                A = centered_ref_pos[valid_idx]
+                B = centered_def_pos[valid_idx]
+                shear, principal = _compute_single_strain_numba(A, B)
+                results.append((atom_idx, shear, principal))
+            return results
+
+        # Create tasks grouped by neighbor count
         tasks = []
-        max_count = max(count_to_indices.keys())
-
-        # Prepare tasks
         for count, indices in count_to_indices.items():
-            if count < 4 or len(indices) == 0:
-                continue
-
-            batch_size = len(indices)
-            ref_pos_batch = np.zeros((batch_size, max_count, 3), dtype=np.float32)
-            def_pos_batch = np.zeros((batch_size, max_count, 3), dtype=np.float32)
-
-            for j, idx in enumerate(indices):
-                ref_pos = ref_positions_list[idx]
-                def_pos = def_positions_list[idx]
-                ref_center = ref_centers_list[idx]
-                def_center = def_centers_list[idx]
-
-                # Center positions
-                ref_pos_centered = ref_pos - ref_center
-                def_pos_centered = def_pos - def_center
-
-                # Store in batch array (padding with zeros if needed)
-                ref_pos_batch[j, :len(ref_pos_centered)] = ref_pos_centered
-                def_pos_batch[j, :len(def_pos_centered)] = def_pos_centered
-
-            tasks.append((indices, ref_pos_batch, def_pos_batch, count))
+            # Split into batches if there are many atoms with this count
+            for i in range(0, len(indices), batch_size):
+                batch_indices = indices[i:i+batch_size]
+                tasks.append((count, batch_indices))
 
         # Process in parallel
         with Pool(processes=min(cpu_count(), len(tasks))) as pool:
-            batch_results = pool.map(process_batch_parallel, tasks)
+            results = pool.map(process_task, tasks)
 
-        # Store results
-        for batch_result in batch_results:
-            for idx, shear, principal in batch_result:
-                shear_strains[idx] = float(shear)
-                principal_strains[idx] = principal
+        # Flatten and store results
+        for batch_results in results:
+            for atom_idx, shear, principal in batch_results:
+                shear_strains[atom_idx] = float(shear)
+                principal_strains[atom_idx] = principal
 
     else:
-        # Sequential processing version
+        # Sequential processing version with Numba optimization
         for count, indices in count_to_indices.items():
-            if count < 4 or len(indices) == 0:
-                continue
-
-            batch_size = len(indices)
-            # For sequential processing, we don't need to create full batch arrays
-            # since we're processing one at a time anyway
-            for idx in indices:
-                ref_pos = ref_positions_list[idx]
-                def_pos = def_positions_list[idx]
-                ref_center = ref_centers_list[idx]
-                def_center = def_centers_list[idx]
-
-                # Center positions
-                A = ref_pos - ref_center
-                B = def_pos - def_center
-
-                try:
-                    shear, principal = _compute_single_strain(A, B)
-                    shear_strains[idx] = float(shear)
-                    principal_strains[idx] = principal
-                except Exception as e:
-                    print(f"Error computing strain for atom {idx}: {str(e)}")
-                    shear_strains[idx] = np.nan
-                    principal_strains[idx] = np.nan
+            for atom_idx, valid_idx in indices:
+                A = centered_ref_pos[valid_idx]
+                B = centered_def_pos[valid_idx]
+                shear, principal = _compute_single_strain_numba(A, B)
+                shear_strains[atom_idx] = float(shear)
+                principal_strains[atom_idx] = principal
 
     return shear_strains, principal_strains
