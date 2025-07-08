@@ -1,109 +1,145 @@
-# compute.py
-import jax
-import jax.numpy as jnp
-from jax import jit, grad, vmap
-from jax.scipy.linalg import eigh
-from jax import config
+# compute.py - Final optimized CPU version
 import numpy as np
+from scipy.linalg import inv
+from collections import defaultdict
+from multiprocessing import Pool, cpu_count
 
-# Check available devices and select appropriate platform
-def get_available_platform():
-    backends = [backend.platform for backend in jax.devices()]
-    if 'gpu' in backends:
-        return 'gpu'
-    elif 'tpu' in backends:
-        return 'tpu'
-    else:
-        return 'cpu'
-
-# Configure JAX to use the available platform
-platform = get_available_platform()
-config.update('jax_platform_name', platform)
-print(f"Using {platform.upper()} for computations")
-
-# Use 32-bit precision for better performance
-config.update("jax_enable_x64", False)
-
-print("Available devices:", jax.devices())
-
-# JIT compile core computations
-@jit
 def _compute_single_strain(A, B):
-    """Core computation for a single strain tensor."""
-    D = jnp.linalg.inv(A.T @ A)
-    C = B @ B.T - A @ A.T
-    Q = 0.5 * (D @ A.T @ C @ A @ D)
-    Q = 0.5 * (Q + Q.T)  # Ensure symmetry
-    
-    # Compute strains in the same function to reduce overhead
-    eigenvalues = jnp.linalg.eigvalsh(Q)
-    shear = jnp.trace(Q @ Q) - (1/3) * jnp.square(jnp.trace(Q))
-    
-    return shear, jnp.sort(eigenvalues)[::-1]
+    """Core computation for a single strain tensor using numpy."""
+    ATA = np.dot(A.T, A)
+    D = inv(ATA)
+    C = np.dot(B, B.T) - np.dot(A, A.T)
+    Q = 0.5 * np.dot(np.dot(np.dot(D, A.T), C), np.dot(A, D))
+    Q = 0.5 * (Q + Q.T)
+    eigenvalues, _ = np.linalg.eigh(Q)
+    eigenvalues = np.sort(eigenvalues)[::-1]
+    shear = np.trace(np.dot(Q, Q)) - (1/3) * np.square(np.trace(Q))
+    return shear, eigenvalues
 
-@jit
-def _compute_batch_strain(ref_pos_batch, def_pos_batch):
-    """Vectorized computation for a batch of strain tensors."""
-    D = jnp.linalg.inv(ref_pos_batch.transpose((0, 2, 1)) @ ref_pos_batch)
-    C = def_pos_batch @ def_pos_batch.transpose((0, 2, 1)) - ref_pos_batch @ ref_pos_batch.transpose((0, 2, 1))
-    Q = 0.5 * (D @ ref_pos_batch.transpose((0, 2, 1)) @ C @ ref_pos_batch @ D)
-    Q = 0.5 * (Q + Q.transpose((0, 2, 1)))
-    
-    eigenvalues = vmap(jnp.linalg.eigvalsh)(Q)
-    shear = jnp.trace(Q @ Q, axis1=1, axis2=2) - (1/3) * jnp.square(jnp.trace(Q, axis1=1, axis2=2))
-    
-    return shear, jnp.sort(eigenvalues, axis=1)[:, ::-1]
+def process_batch_parallel(task_data):
+    """Parallel worker function for processing batches."""
+    batch_indices, ref_pos_batch, def_pos_batch, count = task_data
+    results = []
 
-def process_frame_data(ref_positions_list, ref_centers_list, def_positions_list, def_centers_list):
-    """Process all positions for a frame with variable neighbor counts."""
+    for j in range(len(batch_indices)):
+        idx = batch_indices[j]
+        # Extract only the valid portion (non-padded part)
+        A = ref_pos_batch[j, :count]
+        B = def_pos_batch[j, :count]
+
+        try:
+            shear, principal = _compute_single_strain(A, B)
+            results.append((idx, shear, principal))
+        except Exception as e:
+            print(f"Error computing strain: {str(e)}")
+            results.append((idx, np.nan, np.array([np.nan, np.nan, np.nan])))
+
+    return results
+
+def process_frame_data(ref_positions_list, ref_centers_list, def_positions_list, def_centers_list, parallel=False):
+    """
+    Optimized CPU version with optional parallel processing.
+
+    Args:
+        ref_positions_list: List of reference positions for each atom
+        ref_centers_list: List of reference centers for each atom
+        def_positions_list: List of deformed positions for each atom
+        def_centers_list: List of deformed centers for each atom
+        parallel: If True, use multiprocessing (default: False)
+
+    Returns:
+        Tuple of shear strains and principal strains arrays
+    """
     n_atoms = len(ref_positions_list)
     shear_strains = np.zeros(n_atoms, dtype=np.float32)
     principal_strains = np.zeros((n_atoms, 3), dtype=np.float32)
 
-    # Process each atom individually
+    # First process atoms with sufficient neighbors in batches by count
+    count_to_indices = defaultdict(list)
+    neighbor_counts = []
+
+    # Collect neighbor counts and group indices
     for i in range(n_atoms):
-        ref_pos = ref_positions_list[i]
-        def_pos = def_positions_list[i]
-        ref_center = ref_centers_list[i]
-        def_center = def_centers_list[i]
-        
-        # Check if we have enough neighbors (at least 4 for 3D stability)
-        if len(ref_pos) < 4:
-            print(f"Warning: Atom {i} has only {len(ref_pos)} neighbors (need at least 4)")
-            # Set to NaN to indicate problematic calculation
+        count = len(ref_positions_list[i])
+        neighbor_counts.append(count)
+        if count >= 4:
+            count_to_indices[count].append(i)
+
+    # For atoms with insufficient neighbors
+    for i in range(n_atoms):
+        if neighbor_counts[i] < 4:
             shear_strains[i] = np.nan
             principal_strains[i] = np.nan
-            continue
-            
-        # Center the positions
-        A = ref_pos - ref_center
-        B = def_pos - def_center
-        
-        try:
-            # Convert to JAX arrays
-            A_jax = jnp.array(A, dtype=jnp.float32)
-            B_jax = jnp.array(B, dtype=jnp.float32)
-            
-            # Check condition number before proceeding
-            AtA = A_jax.T @ A_jax
-            cond_num = np.linalg.cond(AtA)
-            
-            if cond_num > 1e10:
-                print(f"Warning: Atom {i} has poorly conditioned matrix (condition number: {cond_num:.2e})")
-                shear_strains[i] = np.nan
-                principal_strains[i] = np.nan
+
+    if not count_to_indices:
+        return shear_strains, principal_strains
+
+    if parallel:
+        # Parallel processing version
+        tasks = []
+        max_count = max(count_to_indices.keys())
+
+        # Prepare tasks
+        for count, indices in count_to_indices.items():
+            if count < 4 or len(indices) == 0:
                 continue
-            
-            # Compute strain
-            shear, principal = _compute_single_strain(A_jax, B_jax)
-            
-            # Convert back to numpy and store
-            shear_strains[i] = float(shear)
-            principal_strains[i] = np.array(principal)
-            
-        except Exception as e:
-            print(f"Error computing strain for atom {i}: {str(e)}")
-            shear_strains[i] = np.nan
-            principal_strains[i] = np.nan
+
+            batch_size = len(indices)
+            ref_pos_batch = np.zeros((batch_size, max_count, 3), dtype=np.float32)
+            def_pos_batch = np.zeros((batch_size, max_count, 3), dtype=np.float32)
+
+            for j, idx in enumerate(indices):
+                ref_pos = ref_positions_list[idx]
+                def_pos = def_positions_list[idx]
+                ref_center = ref_centers_list[idx]
+                def_center = def_centers_list[idx]
+
+                # Center positions
+                ref_pos_centered = ref_pos - ref_center
+                def_pos_centered = def_pos - def_center
+
+                # Store in batch array (padding with zeros if needed)
+                ref_pos_batch[j, :len(ref_pos_centered)] = ref_pos_centered
+                def_pos_batch[j, :len(def_pos_centered)] = def_pos_centered
+
+            tasks.append((indices, ref_pos_batch, def_pos_batch, count))
+
+        # Process in parallel
+        with Pool(processes=min(cpu_count(), len(tasks))) as pool:
+            batch_results = pool.map(process_batch_parallel, tasks)
+
+        # Store results
+        for batch_result in batch_results:
+            for idx, shear, principal in batch_result:
+                shear_strains[idx] = float(shear)
+                principal_strains[idx] = principal
+
+    else:
+        # Sequential processing version
+        for count, indices in count_to_indices.items():
+            if count < 4 or len(indices) == 0:
+                continue
+
+            batch_size = len(indices)
+            # For sequential processing, we don't need to create full batch arrays
+            # since we're processing one at a time anyway
+            for idx in indices:
+                ref_pos = ref_positions_list[idx]
+                def_pos = def_positions_list[idx]
+                ref_center = ref_centers_list[idx]
+                def_center = def_centers_list[idx]
+
+                # Center positions
+                A = ref_pos - ref_center
+                B = def_pos - def_center
+
+                try:
+                    shear, principal = _compute_single_strain(A, B)
+                    shear_strains[idx] = float(shear)
+                    principal_strains[idx] = principal
+                except Exception as e:
+                    print(f"Error computing strain for atom {idx}: {str(e)}")
+                    shear_strains[idx] = np.nan
+                    principal_strains[idx] = np.nan
 
     return shear_strains, principal_strains
