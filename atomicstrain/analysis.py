@@ -7,14 +7,12 @@ from tqdm import tqdm
 import os
 
 class StrainAnalysis(AnalysisBase):
-    def __init__(self, reference, deformed, residue_numbers, output_dir, min_neighbors=3, n_frames=None, use_all_heavy=False,
-                 calculate_rmsf=True, **kwargs):
+    def __init__(self, reference, deformed, residue_numbers, output_dir, min_neighbors=3, n_frames=None, use_all_heavy=False, **kwargs):
         self.ref = reference
         self.defm = deformed
         self.residue_numbers = residue_numbers
         self.min_neighbors = min_neighbors
         self.use_all_heavy = use_all_heavy
-        self.calculate_rmsf = calculate_rmsf
         self.selections = create_selections(self.ref, self.defm, residue_numbers, min_neighbors, use_all_heavy)
         self.output_dir = output_dir
         self.has_ref_trajectory = hasattr(self.ref, 'trajectory') and len(self.ref.trajectory) > 1
@@ -60,13 +58,8 @@ class StrainAnalysis(AnalysisBase):
         self.results.atom_info = [(ref_center.resid, ref_center.name) 
                                  for (_, ref_center), _ in self.selections]
         
-        # Initialize RMSF-related attributes only if RMSF calculation is enabled
-        if self.calculate_rmsf:
-            # For RMSF, we need to store absolute positions, not displacements
-            self.results._positions_sum = np.zeros((n_atoms, 3), dtype=np.float32)
-            self.results._positions_sq_sum = np.zeros((n_atoms, 3), dtype=np.float32)
-        
         self._frame_counter = 0
+
 
     def _single_frame(self):
         if self.has_ref_trajectory:
@@ -97,15 +90,6 @@ class StrainAnalysis(AnalysisBase):
         # Store results
         self.results.shear_strains[self._frame_counter] = frame_shear
         self.results.principal_strains[self._frame_counter] = frame_principal
-
-        # Calculate RMSF if enabled
-        if self.calculate_rmsf:
-            # Get current positions of deformed centers
-            current_positions = np.array(def_centers_list)
-            
-            # Add to running sums for RMSF calculation
-            self.results._positions_sum += current_positions
-            self.results._positions_sq_sum += current_positions ** 2
         
         # Flush less frequently
         if self._frame_counter % 1000 == 0:

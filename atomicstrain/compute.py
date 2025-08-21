@@ -5,9 +5,34 @@ from collections import defaultdict
 from multiprocessing import Pool, cpu_count
 from numba import njit, prange
 import warnings
+import MDAnalysis as mda
 
 # Suppress warnings from potential numerical issues
 warnings.filterwarnings('ignore')
+
+def calculate_neighbors(positions, method, inner_radius=6.0, outer_radius=8.0):
+    """
+    Calculate the number of neighbors for each atom based on a distance threshold.
+    
+    Args:
+        positions: Array of atom positions.
+        threshold: Distance threshold to consider an atom as a neighbor.
+    
+    Returns:
+        List of neighbor counts for each atom.
+    """
+    n_atoms = len(positions)
+    neighbor_counts = []
+
+    distances = mda.analysis.distances.self_distance_array(positions, box=None)
+
+    if method == 'cutoff':
+        for i in range(n_atoms):
+            # Count neighbors within the outer radius, excluding self
+             = (distances[i] < outer_radius) & (distances[i] > 0)
+            neighbor_counts.append(count)
+
+    return neighbor_counts
 
 @njit(fastmath=True, cache=True)
 def _compute_single_strain_numba(A, B):
