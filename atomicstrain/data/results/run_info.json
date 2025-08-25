@@ -1,0 +1,19 @@
+{
+  "timestamp": "2025-08-25_17-19-42",
+  "arguments": {
+    "reference": "cript_wt.pdb",
+    "deformed": "cript_g330t.pdb",
+    "ref_trajectory": null,
+    "def_trajectory": null,
+    "stride": 1,
+    "output": "results",
+    "min_neighbors": 3,
+    "begin": null,
+    "end": null,
+    "time_step": null,
+    "use_all_heavy": false,
+    "residue_range": "307-397",
+    "calculate_rmsf": true
+  },
+  "command": "python main.py --reference cript_wt.pdb --deformed cript_g330t.pdb --stride 1 --output results --min-neighbors 3 --residue-range 307-397 --rmsf"
+}

@@ -10,43 +10,6 @@ import MDAnalysis as mda
 # Suppress warnings from potential numerical issues
 warnings.filterwarnings('ignore')
 
-def calculate_neighbors(positions, method, inner_radius=6.0, outer_radius=10.0):
-    """
-    Calculate the neighbors for each atom based on distance thresholds.
-    
-    Args:
-        positions: Array of atom positions.
-        method: Method to use for neighbor calculation ('cutoff', etc.)
-        inner_radius: Inner distance threshold (optional for future use)
-        outer_radius: Outer distance threshold to consider an atom as a neighbor.
-    
-    Returns:
-        List of neighbor indices for each atom.
-    """
-    n_atoms = len(positions)
-    neighbor_list = []
-    weights = np.ones(n_atoms)
-
-    # Use distance_array to get full n_atoms x n_atoms distance matrix
-    distances = mda.analysis.distances.distance_array(positions, positions, box=None)
-
-    if method == 'cutoff':
-        for i in range(n_atoms):
-            # Find neighbors within the outer radius, excluding self
-            neighbors_mask = (distances[i] < outer_radius) & (distances[i] > 0)
-            neighbor_indices = np.where(neighbors_mask)[0]
-            if len(neighbor_indices) < 3:
-                raise SystemExit(f"Too few neighbors for atom {i}, incrase the outer_radius")
-            neighbor_list.append(neighbor_indices)
-
-    else:
-        for i in range(n_atoms):
-            neighbors_mask = (distances[i] < inner_radius)
-
-        
-    
-    return neighbor_list, weights
-
 @njit(fastmath=True, cache=True)
 def _compute_single_strain_numba(A, B):
     """

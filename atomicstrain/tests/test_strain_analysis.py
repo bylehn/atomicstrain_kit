@@ -30,13 +30,12 @@ def test_create_selections(mock_universes):
     print(f"Debug: ref CA atoms: {len(ref.select_atoms('name CA'))}")
     print(f"Debug: defm CA atoms: {len(defm.select_atoms('name CA'))}")
     
-    selections = create_selections(ref, defm, residue_numbers, min_neighbors)
+    selections = create_selections(ref, residue_numbers, min_neighbors=min_neighbors)
     
     assert len(selections) > 0, "No selections were created"
-    for (ref_sel, ref_center), (defm_sel, defm_center) in selections:
+    for ref_sel, ref_center, weights in selections:
         assert len(ref_sel) > min_neighbors, f"Not enough atoms selected for center {ref_center.resids[0]}"
-        assert len(defm_sel) > min_neighbors, f"Not enough atoms selected for center {defm_center.resids[0]}"
-        assert len(ref_sel) == len(defm_sel), f"Mismatched selection sizes for center {ref_center.resids[0]}"
+        assert len(weights) == len(ref_sel), f"Mismatched weights and selection sizes for center {ref_center.resids[0]}"
 
 def test_compute_strain_tensor():
     """Test the compute_strain_tensor function."""

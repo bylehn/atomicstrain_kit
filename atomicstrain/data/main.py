@@ -85,6 +85,7 @@ def save_run_info(args: argparse.Namespace, output_dir: str) -> None:
         'time_step': args.time_step,
         'use_all_heavy': args.use_all_heavy,
         'residue_range': args.residue_range,
+        'calculate_rmsf': args.calculate_rmsf  # Add RMSF flag
     }
     
     # Create run info dictionary
@@ -167,6 +168,12 @@ def main():
     parser.add_argument("--residue-range", type=str, default="6-97",
                        help="Range of residues to analyze in format 'start-end' (default: '6-97')")
     
+    # RMSF calculation options
+    parser.add_argument('--rmsf', dest='calculate_rmsf', action='store_true', default=True,
+                       help='Calculate RMSF and normalized strains (default: enabled)')
+    parser.add_argument('--no-rmsf', dest='calculate_rmsf', action='store_false',
+                       help='Disable RMSF calculation')
+    
     args = parser.parse_args()
 
     # Create output directories
@@ -191,7 +198,7 @@ def main():
     print("\n=== Starting Atomic Strain Analysis ===")
     print(f"Run started at: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Output directory: {os.path.abspath(args.output)}")
-
+    print(f"RMSF calculation: {'enabled' if args.calculate_rmsf else 'disabled'}")
     print("\n=== Loading Structures and Trajectories ===")
 
     # Load universes with trajectories
@@ -274,7 +281,8 @@ def main():
     # Run the analysis with RMSF calculation parameter
     strain_analysis = StrainAnalysis(
         ref, defm, residue_numbers, args.output, args.min_neighbors, 
-        n_frames, use_all_heavy=args.use_all_heavy
+        n_frames, use_all_heavy=args.use_all_heavy,
+        calculate_rmsf=args.calculate_rmsf  # Pass RMSF flag
     )
     strain_analysis.run(start=start_frame, stop=end_frame, stride=args.stride)
 

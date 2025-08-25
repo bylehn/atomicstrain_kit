@@ -13,7 +13,7 @@ class StrainAnalysis(AnalysisBase):
         self.residue_numbers = residue_numbers
         self.min_neighbors = min_neighbors
         self.use_all_heavy = use_all_heavy
-        self.selections = create_selections(self.ref, self.defm, residue_numbers, min_neighbors, use_all_heavy)
+        self.selections = create_selections(self.ref, residue_numbers, min_neighbors=min_neighbors, use_all_heavy=use_all_heavy)
         self.output_dir = output_dir
         self.has_ref_trajectory = hasattr(self.ref, 'trajectory') and len(self.ref.trajectory) > 1
         
@@ -56,7 +56,7 @@ class StrainAnalysis(AnalysisBase):
         )
         
         self.results.atom_info = [(ref_center.resid, ref_center.name) 
-                                 for (_, ref_center), _ in self.selections]
+                                 for _, ref_center, _ in self.selections]
         
         self._frame_counter = 0
 
@@ -72,11 +72,15 @@ class StrainAnalysis(AnalysisBase):
         def_centers_list = []
 
         # Collect all positions for each atom
-        for i, ((ref_sel, ref_center), (defm_sel, defm_center)) in enumerate(self.selections):
+        for i, (ref_sel, ref_center, weights) in enumerate(self.selections):
             # Use ALL atoms in the selection, not just min_neighbors
             ref_positions_list.append(ref_sel.positions)
             ref_centers_list.append(ref_center.position)
+            # For deformed structure, use the same atom indices as reference
+            defm_sel = self.defm.atoms[ref_sel.indices]
             def_positions_list.append(defm_sel.positions)
+            # Find the corresponding center atom in deformed structure
+            defm_center = self.defm.atoms[ref_center.index]
             def_centers_list.append(defm_center.position)
 
         # Process frame with lists of variable-sized arrays
@@ -138,9 +142,7 @@ class StrainAnalysis(AnalysisBase):
             print(f"Total frames to analyze: {total_frames}")
             if self.has_ref_trajectory:
                 print("Using reference trajectory")
-            print(f"Number of atoms to analyze: {len(self.selections)}")
-            print(f"RMSF calculation: {'enabled' if self.calculate_rmsf else 'disabled'}")
-            
+            print(f"Number of atoms to analyze: {len(self.selections)}")            
             # Memory usage estimate
             mem_per_frame = (len(self.selections) * 4 * 4)  # 4 bytes per float32, 4 values per atom
             total_mem_estimate = (mem_per_frame * total_frames) / (1024 * 1024)  # Convert to MB
@@ -200,43 +202,6 @@ class StrainAnalysis(AnalysisBase):
         self.results.avg_shear_strains = np.mean(self.results.shear_strains[:self._frame_counter], axis=0)
         self.results.avg_principal_strains = np.mean(self.results.principal_strains[:self._frame_counter], axis=0)
         
-        # Calculate RMSF if enabled
-        if self.calculate_rmsf:
-            n_frames = self._frame_counter
-            
-            # Calculate mean positions
-            mean_positions = self.results._positions_sum / n_frames
-            
-            # Calculate mean of squared positions
-            mean_sq_positions = self.results._positions_sq_sum / n_frames
-            
-            # Calculate variance: Var(X) = E[X^2] - E[X]^2
-            variance = mean_sq_positions - mean_positions ** 2
-            
-            # Handle numerical errors (variance should never be negative)
-            variance = np.maximum(variance, 0)
-            
-            # RMSF is the square root of the sum of variances for x, y, z
-            self.results.rmsf = np.sqrt(np.sum(variance, axis=1))
-            
-            # Calculate normalized strains
-            epsilon = 1e-10  # Small value to prevent division by zero
-            self.results.norm_avg_shear_strains = (
-                self.results.avg_shear_strains / (self.results.rmsf + epsilon)
-            )
-            self.results.norm_avg_principal_strains = (
-                self.results.avg_principal_strains / (self.results.rmsf[:, np.newaxis] + epsilon)
-            )
-            
-            print(f"\nRMSF statistics:")
-            print(f"  Mean RMSF: {np.mean(self.results.rmsf):.4f} Å")
-            print(f"  Min RMSF: {np.min(self.results.rmsf):.4f} Å")
-            print(f"  Max RMSF: {np.max(self.results.rmsf):.4f} Å")
-        else:
-            # Set to None if not calculated
-            self.results.rmsf = None
-            self.results.norm_avg_shear_strains = None
-            self.results.norm_avg_principal_strains = None
 
         # Save copies for visualization
         self.results.final_shear_strains = np.array(
@@ -255,10 +220,7 @@ class StrainAnalysis(AnalysisBase):
             self.results.avg_shear_strains,
             self.results.avg_principal_strains,
             self.results.atom_info,
-            self.use_all_heavy,
-            rmsf=self.results.rmsf,
-            norm_avg_shear_strains=self.results.norm_avg_shear_strains,
-            norm_avg_principal_strains=self.results.norm_avg_principal_strains
+            self.use_all_heavy
         )
 
         write_pdb_with_strains(
@@ -268,10 +230,7 @@ class StrainAnalysis(AnalysisBase):
             self.results.avg_shear_strains,
             self.results.avg_principal_strains,
             self.results.atom_info,
-            self.use_all_heavy,
-            rmsf=self.results.rmsf,
-            norm_avg_shear_strains=self.results.norm_avg_shear_strains,
-            norm_avg_principal_strains=self.results.norm_avg_principal_strains
+            self.use_all_heavy
         )
 
         # Clean up
