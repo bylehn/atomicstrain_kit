@@ -7,12 +7,16 @@ from tqdm import tqdm
 import os
 
 class StrainAnalysis(AnalysisBase):
-    def __init__(self, reference, deformed, residue_numbers, output_dir, min_neighbors=3, n_frames=None, use_all_heavy=False, **kwargs):
+    def __init__(self, reference, deformed, residue_numbers, output_dir, min_neighbors=3, 
+                 n_frames=None, use_all_heavy=False, compute_deformation_gradient=False,
+                 compute_strain_metrics=None, **kwargs):
         self.ref = reference
         self.defm = deformed
         self.residue_numbers = residue_numbers
         self.min_neighbors = min_neighbors
         self.use_all_heavy = use_all_heavy
+        self.compute_deformation_gradient = compute_deformation_gradient
+        self.compute_strain_metrics = compute_strain_metrics or {}
         self.selections = create_selections(self.ref, residue_numbers, min_neighbors=min_neighbors, use_all_heavy=use_all_heavy)
         self.output_dir = output_dir
         self.has_ref_trajectory = hasattr(self.ref, 'trajectory') and len(self.ref.trajectory) > 1
@@ -55,6 +59,88 @@ class StrainAnalysis(AnalysisBase):
             shape=(actual_n_frames, n_atoms, 3)
         )
         
+        # Create memory-mapped arrays for additional metrics if requested
+        if self.compute_deformation_gradient:
+            self.results.deformation_gradients = np.memmap(
+                f"{data_dir}/deformation_gradients.npy",
+                dtype='float32',
+                mode='w+',
+                shape=(actual_n_frames, n_atoms, 3, 3)
+            )
+            
+        if self.compute_strain_metrics:
+            if self.compute_strain_metrics.get('euler', False):
+                self.results.euler_linear = np.memmap(
+                    f"{data_dir}/euler_linear.npy",
+                    dtype='float32',
+                    mode='w+',
+                    shape=(actual_n_frames, n_atoms, 3, 3)
+                )
+                self.results.euler_nonlinear = np.memmap(
+                    f"{data_dir}/euler_nonlinear.npy",
+                    dtype='float32',
+                    mode='w+',
+                    shape=(actual_n_frames, n_atoms, 3, 3)
+                )
+                
+            if self.compute_strain_metrics.get('lagrange', False):
+                self.results.lagrange_linear = np.memmap(
+                    f"{data_dir}/lagrange_linear.npy",
+                    dtype='float32',
+                    mode='w+',
+                    shape=(actual_n_frames, n_atoms, 3, 3)
+                )
+                self.results.lagrange_nonlinear = np.memmap(
+                    f"{data_dir}/lagrange_nonlinear.npy",
+                    dtype='float32',
+                    mode='w+',
+                    shape=(actual_n_frames, n_atoms, 3, 3)
+                )
+                
+            if self.compute_strain_metrics.get('invariants', False):
+                self.results.invariants = np.memmap(
+                    f"{data_dir}/invariants.npy",
+                    dtype='float32',
+                    mode='w+',
+                    shape=(actual_n_frames, n_atoms, 3)
+                )
+                
+            if self.compute_strain_metrics.get('stretches', False):
+                self.results.principal_stretches = np.memmap(
+                    f"{data_dir}/principal_stretches.npy",
+                    dtype='float32',
+                    mode='w+',
+                    shape=(actual_n_frames, n_atoms, 3)
+                )
+                self.results.principal_axes = np.memmap(
+                    f"{data_dir}/principal_axes.npy",
+                    dtype='float32',
+                    mode='w+',
+                    shape=(actual_n_frames, n_atoms, 3, 3)
+                )
+                
+            if self.compute_strain_metrics.get('rotations', False):
+                self.results.rotation_angles = np.memmap(
+                    f"{data_dir}/rotation_angles.npy",
+                    dtype='float32',
+                    mode='w+',
+                    shape=(actual_n_frames, n_atoms)
+                )
+                self.results.rotation_axes = np.memmap(
+                    f"{data_dir}/rotation_axes.npy",
+                    dtype='float32',
+                    mode='w+',
+                    shape=(actual_n_frames, n_atoms, 3)
+                )
+                
+            if self.compute_strain_metrics.get('energy', False):
+                self.results.elastic_energy = np.memmap(
+                    f"{data_dir}/elastic_energy.npy",
+                    dtype='float32',
+                    mode='w+',
+                    shape=(actual_n_frames, n_atoms)
+                )
+        
         self.results.atom_info = [(ref_center.resid, ref_center.name) 
                                  for _, ref_center, _ in self.selections]
         
@@ -72,10 +158,12 @@ class StrainAnalysis(AnalysisBase):
         def_centers_list = []
 
         # Collect all positions for each atom
+        weights_list = []
         for i, (ref_sel, ref_center, weights) in enumerate(self.selections):
             # Use ALL atoms in the selection, not just min_neighbors
             ref_positions_list.append(ref_sel.positions)
             ref_centers_list.append(ref_center.position)
+            weights_list.append(weights)
             # For deformed structure, use the same atom indices as reference
             defm_sel = self.defm.atoms[ref_sel.indices]
             def_positions_list.append(defm_sel.positions)
@@ -84,16 +172,56 @@ class StrainAnalysis(AnalysisBase):
             def_centers_list.append(defm_center.position)
 
         # Process frame with lists of variable-sized arrays
-        frame_shear, frame_principal = process_frame_data(
-            ref_positions_list,
-            ref_centers_list,
-            def_positions_list,
-            def_centers_list
-        )
-
-        # Store results
-        self.results.shear_strains[self._frame_counter] = frame_shear
-        self.results.principal_strains[self._frame_counter] = frame_principal
+        if self.compute_deformation_gradient or self.compute_strain_metrics:
+            results = process_frame_data(
+                ref_positions_list,
+                ref_centers_list,
+                def_positions_list,
+                def_centers_list,
+                weights_list=weights_list,
+                compute_deformation_gradient=self.compute_deformation_gradient,
+                compute_strain_metrics=self.compute_strain_metrics
+            )
+            
+            # Store standard results
+            self.results.shear_strains[self._frame_counter] = results['shear_strains']
+            self.results.principal_strains[self._frame_counter] = results['principal_strains']
+            
+            # Store additional results if computed
+            if self.compute_deformation_gradient and 'deformation_gradients' in results:
+                self.results.deformation_gradients[self._frame_counter] = results['deformation_gradients']
+                
+            if self.compute_strain_metrics:
+                for metric, enabled in self.compute_strain_metrics.items():
+                    if enabled:
+                        if metric == 'euler' and 'euler_linear' in results:
+                            self.results.euler_linear[self._frame_counter] = results['euler_linear']
+                            self.results.euler_nonlinear[self._frame_counter] = results['euler_nonlinear']
+                        elif metric == 'lagrange' and 'lagrange_linear' in results:
+                            self.results.lagrange_linear[self._frame_counter] = results['lagrange_linear']
+                            self.results.lagrange_nonlinear[self._frame_counter] = results['lagrange_nonlinear']
+                        elif metric == 'invariants' and 'invariants' in results:
+                            self.results.invariants[self._frame_counter] = results['invariants']
+                        elif metric == 'stretches' and 'principal_stretches' in results:
+                            self.results.principal_stretches[self._frame_counter] = results['principal_stretches']
+                            self.results.principal_axes[self._frame_counter] = results['principal_axes']
+                        elif metric == 'rotations' and 'rotation_angles' in results:
+                            self.results.rotation_angles[self._frame_counter] = results['rotation_angles']
+                            self.results.rotation_axes[self._frame_counter] = results['rotation_axes']
+                        elif metric == 'energy' and 'elastic_energy' in results:
+                            self.results.elastic_energy[self._frame_counter] = results['elastic_energy']
+        else:
+            # Standard computation
+            frame_shear, frame_principal = process_frame_data(
+                ref_positions_list,
+                ref_centers_list,
+                def_positions_list,
+                def_centers_list
+            )
+            
+            # Store results
+            self.results.shear_strains[self._frame_counter] = frame_shear
+            self.results.principal_strains[self._frame_counter] = frame_principal
         
         # Flush less frequently
         if self._frame_counter % 1000 == 0:

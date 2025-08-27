@@ -1,7 +1,7 @@
 import numpy as np
 from MDAnalysis.analysis.distances import distance_array
 
-def create_selections(ref, residue_numbers, strategy='adaptive', min_neighbors=3, 
+def create_selections(ref, residue_numbers, strategy='weighted', min_neighbors=3, 
                      radius=8, inner_radius=6, outer_radius=10, use_all_heavy=False):
     """
     Create atom selections for strain analysis.

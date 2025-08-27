@@ -167,6 +167,24 @@ def main():
     parser.add_argument("--residue-range", type=str, default="6-97",
                        help="Range of residues to analyze in format 'start-end' (default: '6-97')")
     
+    # Deformation gradient and strain metrics options
+    parser.add_argument("--compute-deformation-gradient", action="store_true", 
+                       help="Compute deformation gradient tensors")
+    parser.add_argument("--compute-euler-strain", action="store_true", 
+                       help="Compute Euler strain (linear and non-linear)")
+    parser.add_argument("--compute-lagrange-strain", action="store_true", 
+                       help="Compute Lagrange strain (linear and non-linear)")
+    parser.add_argument("--compute-invariants", action="store_true", 
+                       help="Compute strain invariants (I1, I2, I3)")
+    parser.add_argument("--compute-stretches", action="store_true", 
+                       help="Compute principal stretches and axes")
+    parser.add_argument("--compute-rotations", action="store_true", 
+                       help="Compute rotation angles and axes")
+    parser.add_argument("--compute-energy", action="store_true", 
+                       help="Compute elastic energy using Saint Venant-Kirchhoff model")
+    parser.add_argument("--compute-all-metrics", action="store_true", 
+                       help="Compute all available strain metrics")
+    
     args = parser.parse_args()
 
     # Create output directories
@@ -269,12 +287,44 @@ def main():
     print(f"Total frames to be analyzed: {n_frames}")
     print(f"Analyzing residues {start_res} to {end_res}")
     print(f"Using {'all heavy atoms' if args.use_all_heavy else 'only CA atoms'}")
+    
+    # Setup strain metrics to compute
+    compute_strain_metrics = {}
+    if args.compute_all_metrics:
+        compute_strain_metrics = {
+            'euler': True,
+            'lagrange': True,
+            'invariants': True,
+            'stretches': True,
+            'rotations': True,
+            'energy': True
+        }
+    else:
+        compute_strain_metrics = {
+            'euler': args.compute_euler_strain,
+            'lagrange': args.compute_lagrange_strain,
+            'invariants': args.compute_invariants,
+            'stretches': args.compute_stretches,
+            'rotations': args.compute_rotations,
+            'energy': args.compute_energy
+        }
+    
+    # Print which metrics will be computed
+    if args.compute_deformation_gradient or any(compute_strain_metrics.values()):
+        print("\n=== Advanced Strain Metrics ===")
+        if args.compute_deformation_gradient:
+            print("- Deformation gradients will be computed")
+        for metric, enabled in compute_strain_metrics.items():
+            if enabled:
+                print(f"- {metric.capitalize()} strain will be computed")
 
     print("\n=== Running Analysis ===")
-    # Run the analysis with RMSF calculation parameter
+    # Run the analysis with new parameters
     strain_analysis = StrainAnalysis(
         ref, defm, residue_numbers, args.output, args.min_neighbors, 
-        n_frames, use_all_heavy=args.use_all_heavy
+        n_frames, use_all_heavy=args.use_all_heavy,
+        compute_deformation_gradient=args.compute_deformation_gradient,
+        compute_strain_metrics=compute_strain_metrics
     )
     strain_analysis.run(start=start_frame, stop=end_frame, stride=args.stride)
 

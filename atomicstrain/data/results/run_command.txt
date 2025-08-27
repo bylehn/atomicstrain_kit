@@ -1,7 +1,7 @@
-# Run performed on: 2025-08-25_17-19-42
+# Run performed on: 2025-08-27_13-36-32
 
 # Command to reproduce this analysis:
-python main.py --reference cript_wt.pdb --deformed cript_g330t.pdb --stride 1 --output results --min-neighbors 3 --residue-range 307-397 --rmsf
+python main.py --reference cript_wt.pdb --deformed cript_g330t.pdb --stride 1 --output results --min-neighbors 3 --residue-range 307-397
 
 # Full arguments:
 # reference: cript_wt.pdb
@@ -16,4 +16,3 @@ python main.py --reference cript_wt.pdb --deformed cript_g330t.pdb --stride 1 --
 # time_step: None
 # use_all_heavy: False
 # residue_range: 307-397
-# calculate_rmsf: True
